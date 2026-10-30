@@ -1,4 +1,6 @@
-import { useLocation } from "react-router-dom";
+
+import { useLocation, useNavigate } from "react-router-dom";
+import { useAuth } from "../context/AuthContext";
 
 function getTitle(pathname: string): string {
   if (pathname === "/") return "Tổng quan bán hàng";
@@ -13,6 +15,14 @@ function getTitle(pathname: string): string {
 
 function Header() {
   const { pathname } = useLocation();
+  const navigate = useNavigate();
+
+  const { user, logout } = useAuth();
+
+  function handleLogout() {
+    logout();
+    navigate("/login", { replace: true });
+  }
 
   return (
     <header className="header no-print">
@@ -29,8 +39,20 @@ function Header() {
           🔔
         </div>
 
-        <div className="header-avatar">
-          A
+        <div className="header-user">
+          <div className="header-avatar">
+            {user?.name?.charAt(0).toUpperCase() || "A"}
+          </div>
+
+          <span>{user?.name || "Admin"}</span>
+
+          <button
+            type="button"
+            onClick={handleLogout}
+            className="logout-button"
+          >
+            Đăng xuất
+          </button>
         </div>
       </div>
     </header>

@@ -306,12 +306,14 @@ export default function ProductForm({
 
     fileToCompressedDataUrl(file)
       .then((dataUrl) => {
-        setColors((current) =>
-          current.map((item) =>
-            item.uid === uid ? { ...item, image: dataUrl } : item,
-          ),
-        );
-      })
+  setColors((current) =>
+    current.map((item) =>
+      item.uid === uid ? { ...item, image: dataUrl } : item,
+    ),
+  );
+
+  clearError("colors");
+})
       .catch(() =>
         setErrors((current) => ({
           ...current,
@@ -348,8 +350,10 @@ export default function ProductForm({
     clearError("colors");
   };
 
-  const removeColor = (uid: string) =>
-    setColors((current) => current.filter((item) => item.uid !== uid));
+  const removeColor = (uid: string) => {
+  setColors((current) => current.filter((item) => item.uid !== uid));
+  clearError("colors");
+};
 
   const updateColor = (
     uid: string,
@@ -449,8 +453,9 @@ export default function ProductForm({
         !key ||
         !item.image ||
         !(parsePrice(item.price) > 0) ||
-        item.quantity === "" ||
-        !Number.isInteger(Number(item.quantity))
+       item.quantity === "" ||
+!Number.isInteger(Number(item.quantity)) ||
+Number(item.quantity) < 0
       ) {
         next.colors =
           "Vui lòng nhập đầy đủ tên, ảnh, giá (> 0) và số lượng (từ 0 trở lên) cho tất cả màu sản phẩm.";
