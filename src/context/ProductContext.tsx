@@ -1,4 +1,3 @@
-
 import {
   createContext,
   useContext,
@@ -8,18 +7,14 @@ import {
 } from "react";
 
 import type { Product } from "../types/product";
+import { saveToStorage } from "../utils/storage";
 import { tracksColorStock } from "../utils/stock";
-
-import {
-  fetchProducts,
-  createProduct,
-  updateProductApi,
-  deleteProductApi,
-} from "../services/productApi";
 
 export interface StockChange {
   productId: string;
+  // Màu bị trừ/cộng kho. Không truyền thì chỉ tác động vào tổng kho (sản phẩm cũ chưa chia kho theo màu).
   colorId?: string;
+  // Số dương: cộng vào kho (hoàn hàng). Số âm: trừ kho (bán hàng).
   delta: number;
 }
 
@@ -28,18 +23,18 @@ interface ProductContextType {
 
   addProduct: (
     product: Omit<Product, "id" | "createdAt">,
-  ) => Promise<void>;
+  ) => void;
 
   updateProduct: (
     id: string,
     product: Partial<Product>,
-  ) => Promise<void>;
+  ) => void;
 
-  deleteProduct: (id: string) => Promise<void>;
+  deleteProduct: (id: string) => void;
 
   getProductById: (id: string) => Product | undefined;
 
-  adjustStock: (changes: StockChange[]) => Promise<void>;
+  adjustStock: (changes: StockChange[]) => void;
 }
 
 const ProductContext = createContext<
@@ -50,74 +45,97 @@ interface ProductProviderProps {
   children: ReactNode;
 }
 
+const STORAGE_KEY = "product-management-products";
+
+function loadProducts(): Product[] {
+  const savedProducts = localStorage.getItem(STORAGE_KEY);
+
+  if (!savedProducts) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(savedProducts);
+
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
 export function ProductProvider({
   children,
 }: ProductProviderProps) {
-  const [products, setProducts] = useState<Product[]>([]);
+  const [products, setProducts] =
+    useState<Product[]>(loadProducts);
 
-  // Lấy dữ liệu sản phẩm từ MySQL thông qua NestJS
   useEffect(() => {
-    const loadProducts = async () => {
+    saveToStorage(STORAGE_KEY, products);
+  }, [products]);
+
+  // Đồng bộ khi mở nhiều tab: tab khác ghi thì tab này cập nhật theo,
+  // tránh việc ghi đè dữ liệu bằng bản cũ.
+  useEffect(() => {
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key !== STORAGE_KEY || !event.newValue) {
+        return;
+      }
+
       try {
-        const data = await fetchProducts();
-        setProducts(data);
-        console.log("Đã tải sản phẩm từ MySQL:", data);
-      } catch (error) {
-        console.error("Lỗi tải sản phẩm:", error);
+        const parsed = JSON.parse(event.newValue);
+
+        if (Array.isArray(parsed)) {
+          setProducts(parsed);
+        }
+      } catch {
+        // bỏ qua dữ liệu hỏng
       }
     };
 
-    loadProducts();
+    window.addEventListener("storage", handleStorage);
+
+    return () =>
+      window.removeEventListener("storage", handleStorage);
   }, []);
 
   // Thêm sản phẩm
-  const addProduct = async (
+  const addProduct = (
     product: Omit<Product, "id" | "createdAt">,
   ) => {
-    try {
-      const newProduct = await createProduct(product);
+    const newProduct: Product = {
+      ...product,
+      id: crypto.randomUUID(),
+      createdAt: new Date().toISOString(),
+    };
 
-      setProducts((currentProducts) => [
-        ...currentProducts,
-        newProduct,
-      ]);
-    } catch (error) {
-      console.error("Lỗi thêm sản phẩm:", error);
-      throw error;
-    }
+    setProducts((currentProducts) => [
+      ...currentProducts,
+      newProduct,
+    ]);
   };
 
   // Cập nhật sản phẩm
-  const updateProduct = async (
+  const updateProduct = (
     id: string,
     product: Partial<Product>,
   ) => {
-    try {
-      const updatedProduct = await updateProductApi(id, product);
-
-      setProducts((currentProducts) =>
-        currentProducts.map((item) =>
-          item.id === id ? updatedProduct : item,
-        ),
-      );
-    } catch (error) {
-      console.error("Lỗi cập nhật sản phẩm:", error);
-      throw error;
-    }
+    setProducts((currentProducts) =>
+      currentProducts.map((item) =>
+        item.id === id
+          ? {
+              ...item,
+              ...product,
+            }
+          : item,
+      ),
+    );
   };
 
   // Xóa sản phẩm
-  const deleteProduct = async (id: string) => {
-    try {
-      await deleteProductApi(id);
-
-      setProducts((currentProducts) =>
-        currentProducts.filter((item) => item.id !== id),
-      );
-    } catch (error) {
-      console.error("Lỗi xóa sản phẩm:", error);
-      throw error;
-    }
+  const deleteProduct = (id: string) => {
+    setProducts((currentProducts) =>
+      currentProducts.filter((item) => item.id !== id),
+    );
   };
 
   // Lấy sản phẩm theo ID
@@ -125,8 +143,8 @@ export function ProductProvider({
     return products.find((product) => product.id === id);
   };
 
-  // Cộng/trừ tồn kho và lưu thay đổi vào MySQL
-  const adjustStock = async (changes: StockChange[]) => {
+  // Trừ/cộng kho theo đơn hàng. Dùng functional update nên luôn đúng với state mới nhất.
+  const adjustStock = (changes: StockChange[]) => {
     const byProduct = new Map<string, StockChange[]>();
 
     changes.forEach((change) => {
@@ -136,90 +154,54 @@ export function ProductProvider({
       ]);
     });
 
-    const updatedProducts: Product[] = [];
+    setProducts((currentProducts) =>
+      currentProducts.map((item) => {
+        const list = byProduct.get(item.id);
 
-    for (const item of products) {
-      const list = byProduct.get(item.id);
+        if (!list) {
+          return item;
+        }
 
-      if (!list) continue;
+        // Kho chia theo màu: cập nhật từng màu rồi cộng lại thành tổng kho
+        if (tracksColorStock(item)) {
+          const deltas = new Map<string, number>();
 
-      let updatedItem: Product;
+          list.forEach(({ colorId, delta }) => {
+            if (colorId) {
+              deltas.set(colorId, (deltas.get(colorId) ?? 0) + delta);
+            }
+          });
 
-      // Sản phẩm quản lý kho riêng theo màu
-      if (tracksColorStock(item)) {
-        const deltas = new Map<string, number>();
+          const colors = item.colors.map((color) => {
+            const delta = deltas.get(color.id);
 
-        list.forEach(({ colorId, delta }) => {
-          if (colorId) {
-            deltas.set(
-              colorId,
-              (deltas.get(colorId) ?? 0) + delta,
-            );
-          }
-        });
+            return delta === undefined
+              ? color
+              : {
+                  ...color,
+                  quantity: Math.max(0, (color.quantity ?? 0) + delta),
+                };
+          });
 
-        const colors = item.colors.map((color) => {
-          const delta = deltas.get(color.id);
+          return {
+            ...item,
+            colors,
+            quantity: colors.reduce(
+              (sum, color) => sum + (color.quantity ?? 0),
+              0,
+            ),
+          };
+        }
 
-          return delta === undefined
-            ? color
-            : {
-                ...color,
-                quantity: Math.max(
-                  0,
-                  (color.quantity ?? 0) + delta,
-                ),
-              };
-        });
+        // Sản phẩm cũ: một kho chung
+        const delta = list.reduce((sum, change) => sum + change.delta, 0);
 
-        updatedItem = {
-          ...item,
-          colors,
-          quantity: colors.reduce(
-            (sum, color) => sum + (color.quantity ?? 0),
-            0,
-          ),
-        };
-      } else {
-        // Sản phẩm sử dụng kho chung
-        const delta = list.reduce(
-          (sum, change) => sum + change.delta,
-          0,
-        );
-
-        updatedItem = {
+        return {
           ...item,
           quantity: Math.max(0, item.quantity + delta),
         };
-      }
-
-      updatedProducts.push(updatedItem);
-    }
-
-    try {
-      // Lưu từng sản phẩm đã thay đổi vào MySQL
-      const savedProducts = await Promise.all(
-        updatedProducts.map((item) =>
-          updateProductApi(item.id, {
-            quantity: item.quantity,
-            colors: item.colors,
-          }),
-        ),
-      );
-
-      setProducts((currentProducts) =>
-        currentProducts.map((item) => {
-          const saved = savedProducts.find(
-            (product) => product.id === item.id,
-          );
-
-          return saved ?? item;
-        }),
-      );
-    } catch (error) {
-      console.error("Lỗi cập nhật tồn kho:", error);
-      throw error;
-    }
+      }),
+    );
   };
 
   return (

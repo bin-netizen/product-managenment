@@ -8,7 +8,14 @@ import {
 import { Link } from "react-router-dom";
 
 import { fileToCompressedDataUrl } from "../utils/image";
-import type { Product, ProductColor, ProductInput } from "../types/product";
+import { getYouTubeId } from "../utils/media";
+import { MediaPreview } from "./MediaPreview.tsx";
+import type {
+  Product,
+  ProductColor,
+  ProductInput,
+  ProductMedia,
+} from "../types/product";
 import { formatInputPrice, parsePrice } from "../utils/format.ts";
 import {
   COLOR_PRESETS,
@@ -16,9 +23,7 @@ import {
   PRODUCT_TYPES,
   PRODUCT_TYPE_LIST,
   collectSpecs,
-  getVisibleFields,
   isFieldVisible,
-  isSpecEmpty,
   pruneSpecs,
   type ProductType,
   type SpecField,
@@ -35,6 +40,9 @@ interface ColorForm {
 }
 
 type FormErrors = Record<string, string>;
+
+// localStorage chỉ ~5MB cho cả cửa hàng, nên giới hạn số ảnh và chỉ nhận video qua link
+const MAX_MEDIA = 8;
 
 /* ------------------------------------------------------------------ */
 /* Component con                                                       */
@@ -91,104 +99,58 @@ interface SpecInputProps {
 
 function SpecInput({ field, value, error, onChange }: SpecInputProps) {
   const id = `spec-${field.key}`;
+  const isMulti = field.kind === "multiselect";
 
-  if (field.kind === "multiselect") {
-    const selected = Array.isArray(value) ? value : [];
+  // Ô nhiều giá trị: giữ chuỗi người dùng gõ, còn specs lưu dạng mảng
+  const [raw, setRaw] = useState(() =>
+    Array.isArray(value) ? value.join(", ") : "",
+  );
 
-    const toggle = (option: string) => {
+  const inputValue = isMulti ? raw : typeof value === "string" ? value : "";
+
+  // Các lựa chọn cũ chỉ còn là gợi ý trong placeholder, không ép chọn
+  const placeholder =
+    field.kind === "text"
+      ? field.placeholder
+      : `Ví dụ: ${field.options.slice(0, 3).join(", ")}`;
+
+  const hint =
+    field.hint ?? (isMulti ? "Nhập nhiều giá trị, cách nhau bằng dấu phẩy." : undefined);
+
+  const handleChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const text = event.target.value;
+
+    if (isMulti) {
+      setRaw(text);
       onChange(
         field.key,
-        selected.includes(option)
-          ? selected.filter((item) => item !== option)
-          : [...selected, option],
+        text
+          .split(",")
+          .map((item) => item.trim())
+          .filter(Boolean),
       );
-    };
+      return;
+    }
 
-    return (
-      <Field
-        label={field.label}
-        required={field.required}
-        hint={field.hint}
-        error={error}
-        className="full"
-      >
-        <div className="chip-group" role="group" aria-label={field.label}>
-          {field.options.map((option) => {
-            const active = selected.includes(option);
-
-            return (
-              <label
-                key={option}
-                className={`chip ${active ? "chip-active" : ""}`.trim()}
-              >
-                <input
-                  type="checkbox"
-                  checked={active}
-                  onChange={() => toggle(option)}
-                />
-                {option}
-              </label>
-            );
-          })}
-        </div>
-      </Field>
-    );
-  }
-
-  const stringValue = typeof value === "string" ? value : "";
-
-  if (field.kind === "select") {
-    return (
-      <Field
-        label={field.label}
-        required={field.required}
-        hint={field.hint}
-        error={error}
-        htmlFor={id}
-      >
-        <select
-          id={id}
-          value={stringValue}
-          aria-invalid={Boolean(error)}
-          onChange={(event) => onChange(field.key, event.target.value)}
-        >
-          <option value="">-- Chọn --</option>
-
-          {field.options.map((option) => (
-            <option key={option} value={option}>
-              {option}
-            </option>
-          ))}
-        </select>
-      </Field>
-    );
-  }
+    onChange(field.key, text);
+  };
 
   return (
     <Field
       label={field.label}
-      required={field.required}
-      hint={field.hint}
+      hint={hint}
       error={error}
       htmlFor={id}
+      className={isMulti ? "full" : ""}
     >
       <input
         id={id}
         type="text"
-        value={stringValue}
-        placeholder={field.placeholder}
-        list={field.suggestions ? `${id}-list` : undefined}
+        value={inputValue}
+        placeholder={placeholder}
         aria-invalid={Boolean(error)}
-        onChange={(event) => onChange(field.key, event.target.value)}
+        onChange={handleChange}
       />
-
-      {field.suggestions && (
-        <datalist id={`${id}-list`}>
-          {field.suggestions.map((suggestion) => (
-            <option key={suggestion} value={suggestion} />
-          ))}
-        </datalist>
-      )}
     </Field>
   );
 }
@@ -234,6 +196,11 @@ export default function ProductForm({
   );
   const [description, setDescription] = useState(initial?.description ?? "");
   const [image, setImage] = useState(initial?.image ?? "");
+  const [media, setMedia] = useState<ProductMedia[]>(initial?.media ?? []);
+  const [videoLink, setVideoLink] = useState("");
+
+  // Sản phẩm cũ chưa có loại thì vẫn cho chọn một lần, tránh bị kẹt khi sửa
+  const typeLocked = Boolean(initial?.productType);
 
   const [specs, setSpecs] = useState<Record<string, SpecValue>>(
     initial?.specs ?? {},
@@ -266,7 +233,7 @@ export default function ProductForm({
   /* ---------- loại sản phẩm & thông số ---------- */
 
   const handleTypeChange = (next: ProductType) => {
-    if (next === productType) return;
+    if (typeLocked || next === productType) return;
 
     setProductType(next);
     setSpecs((current) => pruneSpecs(current, next));
@@ -306,14 +273,12 @@ export default function ProductForm({
 
     fileToCompressedDataUrl(file)
       .then((dataUrl) => {
-  setColors((current) =>
-    current.map((item) =>
-      item.uid === uid ? { ...item, image: dataUrl } : item,
-    ),
-  );
-
-  clearError("colors");
-})
+        setColors((current) =>
+          current.map((item) =>
+            item.uid === uid ? { ...item, image: dataUrl } : item,
+          ),
+        );
+      })
       .catch(() =>
         setErrors((current) => ({
           ...current,
@@ -321,6 +286,100 @@ export default function ProductForm({
         })),
       );
   };
+
+  /* ---------- thư viện ảnh & video ---------- */
+
+  const handleMediaFiles = async (event: ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files ?? []);
+    event.target.value = ""; // cho phép chọn lại đúng file vừa chọn
+    if (files.length === 0) return;
+
+    const problems: string[] = [];
+    const slots = Math.max(MAX_MEDIA - media.length, 0);
+    const accepted = files.slice(0, slots);
+
+    if (files.length > accepted.length) {
+      problems.push(`Tối đa ${MAX_MEDIA} ảnh/video cho mỗi sản phẩm.`);
+    }
+
+    const results = await Promise.all(
+      accepted.map(async (file): Promise<ProductMedia | null> => {
+        try {
+          if (file.type.startsWith("image/")) {
+            return {
+              id: crypto.randomUUID(),
+              type: "image",
+              url: await fileToCompressedDataUrl(file),
+            };
+          }
+
+          problems.push(`"${file.name}" không phải file ảnh.`);
+        } catch {
+          problems.push(`Không đọc được "${file.name}".`);
+        }
+
+        return null;
+      }),
+    );
+
+    const added = results.filter((item): item is ProductMedia => item !== null);
+
+    if (added.length > 0) {
+      setMedia((current) => [...current, ...added].slice(0, MAX_MEDIA));
+    }
+
+    if (problems.length > 0) {
+      setErrors((current) => ({ ...current, media: problems.join(" ") }));
+    } else {
+      clearError("media");
+    }
+  };
+
+  const addVideoLink = () => {
+    const url = videoLink.trim();
+    if (!url) return;
+
+    const fail = (message: string) =>
+      setErrors((current) => ({ ...current, media: message }));
+
+    // Chỉ nhận http(s) để tránh link độc hại kiểu javascript:
+    if (!/^https?:\/\//i.test(url)) {
+      return fail("Link video phải bắt đầu bằng http:// hoặc https://");
+    }
+
+    if (!getYouTubeId(url) && !/\.(mp4|webm|ogg)(\?.*)?$/i.test(url)) {
+      return fail("Chỉ hỗ trợ link YouTube hoặc file video .mp4 / .webm / .ogg.");
+    }
+
+    if (media.length >= MAX_MEDIA) {
+      return fail(`Tối đa ${MAX_MEDIA} ảnh/video cho mỗi sản phẩm.`);
+    }
+
+    setMedia((current) => [
+      ...current,
+      { id: crypto.randomUUID(), type: "video", url },
+    ]);
+    setVideoLink("");
+    clearError("media");
+  };
+
+  const handleVideoLinkKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      addVideoLink();
+    }
+  };
+
+  const removeMedia = (id: string) =>
+    setMedia((current) => current.filter((item) => item.id !== id));
+
+  const moveMediaToFirst = (id: string) =>
+    setMedia((current) => {
+      const target = current.find((item) => item.id === id);
+      return target
+        ? [target, ...current.filter((item) => item.id !== id)]
+        : current;
+    });
 
   /* ---------- màu sắc ---------- */
 
@@ -350,10 +409,8 @@ export default function ProductForm({
     clearError("colors");
   };
 
-  const removeColor = (uid: string) => {
-  setColors((current) => current.filter((item) => item.uid !== uid));
-  clearError("colors");
-};
+  const removeColor = (uid: string) =>
+    setColors((current) => current.filter((item) => item.uid !== uid));
 
   const updateColor = (
     uid: string,
@@ -404,7 +461,7 @@ export default function ProductForm({
 
   /* ---------- validate & submit ---------- */
 
-  const validate = (type: ProductType): FormErrors => {
+  const validate = (): FormErrors => {
     const next: FormErrors = {};
 
     if (!name.trim()) next.name = "Vui lòng nhập tên sản phẩm.";
@@ -434,31 +491,13 @@ export default function ProductForm({
       next.warranty = "Bảo hành từ 0 đến 60 tháng.";
     }
 
-    if (!image) next.image = "Vui lòng chọn ảnh đại diện.";
-
-    for (const field of getVisibleFields(type, specs)) {
-      if (field.required && isSpecEmpty(specs[field.key])) {
-        next[`spec.${field.key}`] =
-          field.kind === "text"
-            ? `Vui lòng nhập ${field.label.toLowerCase()}.`
-            : `Vui lòng chọn ${field.label.toLowerCase()}.`;
-      }
-    }
-
     const names = new Set<string>();
     for (const item of colors) {
       const key = item.name.trim().toLowerCase();
 
-      if (
-        !key ||
-        !item.image ||
-        !(parsePrice(item.price) > 0) ||
-       item.quantity === "" ||
-!Number.isInteger(Number(item.quantity)) ||
-Number(item.quantity) < 0
-      ) {
-        next.colors =
-          "Vui lòng nhập đầy đủ tên, ảnh, giá (> 0) và số lượng (từ 0 trở lên) cho tất cả màu sản phẩm.";
+      // Chỉ bắt buộc tên màu; giá / số lượng / ảnh có thể bỏ trống
+      if (!key) {
+        next.colors = "Vui lòng nhập tên cho tất cả các màu (hoặc xóa màu trống).";
         break;
       }
 
@@ -481,7 +520,7 @@ Number(item.quantity) < 0
       return;
     }
 
-    const nextErrors = validate(productType);
+    const nextErrors = validate();
     setErrors(nextErrors);
 
     if (Object.keys(nextErrors).length > 0) {
@@ -498,8 +537,8 @@ Number(item.quantity) < 0
       name: item.name.trim(),
       color: item.color,
       image: item.image,
-      price: parsePrice(item.price),
-      quantity: Number(item.quantity),
+      price: parsePrice(item.price) > 0 ? parsePrice(item.price) : parsePrice(price),
+      quantity: Number(item.quantity) || 0,
     }));
 
     onSubmit({
@@ -517,6 +556,7 @@ Number(item.quantity) < 0
         : Number(quantity),
       description: description.trim(),
       image,
+      media,
       colors: productColors,
       features,
       specs: collectSpecs(productType, specs),
@@ -560,11 +600,17 @@ Number(item.quantity) < 0
         <div className="form-section" data-invalid={errors.type ? "true" : undefined}>
           <div className="form-section-title">
             <h3>Loại sản phẩm *</h3>
-            <p>Mỗi loại có bộ thông số kỹ thuật riêng.</p>
+            <p>
+              {typeLocked
+                ? "Loại sản phẩm đã được khóa, không thể thay đổi sau khi tạo."
+                : "Mỗi loại có bộ thông số kỹ thuật riêng. Chọn cẩn thận vì sẽ không đổi được sau khi thêm sản phẩm."}
+            </p>
           </div>
 
           <div className="type-picker" role="radiogroup" aria-label="Loại sản phẩm">
-            {PRODUCT_TYPE_LIST.map((item) => {
+            {PRODUCT_TYPE_LIST.filter(
+              (item) => !typeLocked || item.key === productType,
+            ).map((item) => {
               const active = item.key === productType;
 
               return (
@@ -573,10 +619,15 @@ Number(item.quantity) < 0
                   type="button"
                   role="radio"
                   aria-checked={active}
+                  aria-disabled={typeLocked}
+                  disabled={typeLocked}
                   className={`type-card ${active ? "type-card-active" : ""}`.trim()}
                   onClick={() => handleTypeChange(item.key)}
                 >
-                  <strong>{item.label}</strong>
+                  <strong>
+                    {item.label}
+                    {typeLocked && " 🔒"}
+                  </strong>
                   <small>{item.hint}</small>
                 </button>
               );
@@ -725,9 +776,8 @@ Number(item.quantity) < 0
 
                 <Field
                   label="Ảnh đại diện"
-                  required
                   error={errors.image}
-                  hint="Ảnh này hiển thị ngoài thẻ sản phẩm."
+                  hint="Không bắt buộc. Ảnh này hiển thị ngoài thẻ sản phẩm."
                   className="full"
                   htmlFor="main-image"
                 >
@@ -745,6 +795,90 @@ Number(item.quantity) < 0
                   )}
                 </Field>
               </div>
+            </div>
+
+            {/* ẢNH & VIDEO */}
+
+            <div className="form-section">
+              <div className="form-section-title">
+                <h3>Ảnh & video sản phẩm</h3>
+                <p>
+                  Hiển thị trong trang chi tiết. Tối đa {MAX_MEDIA} mục. Ảnh tải
+                  từ máy; video thêm bằng link YouTube hoặc file .mp4 / .webm.
+                </p>
+              </div>
+
+              <Field
+                label="Tải ảnh"
+                error={errors.media}
+                hint="Chọn được nhiều ảnh cùng lúc, ảnh sẽ được nén tự động."
+                htmlFor="media-files"
+                className="full"
+              >
+                <input
+                  id="media-files"
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  disabled={media.length >= MAX_MEDIA}
+                  onChange={handleMediaFiles}
+                />
+              </Field>
+
+              <div className="feature-input-row">
+                <input
+                  type="url"
+                  value={videoLink}
+                  onChange={(event) => setVideoLink(event.target.value)}
+                  onKeyDown={handleVideoLinkKeyDown}
+                  placeholder="Hoặc dán link video YouTube / .mp4"
+                />
+
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={addVideoLink}
+                >
+                  + Thêm video
+                </button>
+              </div>
+
+              {media.length === 0 ? (
+                <div className="option-empty">Chưa có ảnh hoặc video nào.</div>
+              ) : (
+                <div className="media-grid">
+                  {media.map((item, index) => (
+                    <div className="media-card" key={item.id}>
+                      <div className="media-thumb">
+                        <MediaPreview item={item} />
+                        {index === 0 && (
+                          <span className="media-badge">Hiển thị đầu tiên</span>
+                        )}
+                      </div>
+
+                      <div className="media-actions">
+                        {index > 0 && (
+                          <button
+                            type="button"
+                            className="secondary-button"
+                            onClick={() => moveMediaToFirst(item.id)}
+                          >
+                            Đặt lên đầu
+                          </button>
+                        )}
+
+                        <button
+                          type="button"
+                          className="delete-button"
+                          onClick={() => removeMedia(item.id)}
+                        >
+                          Xóa
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
             {/* THÔNG SỐ THEO LOẠI */}
@@ -785,8 +919,8 @@ Number(item.quantity) < 0
                 <div className="form-section-title">
                   <h3>Màu sắc sản phẩm</h3>
                   <p>
-                    Mỗi màu có ảnh, giá và số lượng riêng. Khi có màu, tổng kho
-                    được tính bằng tổng số lượng các màu.
+                    Chỉ cần tên màu. Giá để trống thì lấy giá đại diện, số lượng
+                    để trống tính là 0. Khi có màu, tổng kho = tổng số lượng các màu.
                   </p>
                 </div>
 
@@ -856,7 +990,7 @@ Number(item.quantity) < 0
                           />
                         </Field>
 
-                        <Field label="Màu hiển thị" required>
+                        <Field label="Màu hiển thị">
                           <div className="color-picker-row">
                             <input
                               type="color"
@@ -869,7 +1003,7 @@ Number(item.quantity) < 0
                           </div>
                         </Field>
 
-                        <Field label="Giá của màu này" required>
+                        <Field label="Giá của màu này">
                           <div className="input-with-suffix">
                             <input
                               type="text"
@@ -884,7 +1018,7 @@ Number(item.quantity) < 0
                           </div>
                         </Field>
 
-                        <Field label="Số lượng của màu này" required>
+                        <Field label="Số lượng của màu này">
                           <input
                             type="number"
                             min="0"
@@ -897,7 +1031,7 @@ Number(item.quantity) < 0
                           />
                         </Field>
 
-                        <Field label="Ảnh của màu này" required>
+                        <Field label="Ảnh của màu này">
                           <input
                             type="file"
                             accept="image/*"

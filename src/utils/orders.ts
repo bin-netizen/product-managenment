@@ -1,5 +1,6 @@
 import type {
   Order,
+  OrderHistoryEntry,
   OrderItem,
   OrderStatus,
   PaymentMethod,
@@ -7,6 +8,7 @@ import type {
 
 export const STATUS_LABEL: Record<OrderStatus, string> = {
   pending: "Chờ xử lý",
+  shipping: "Đang giao",
   completed: "Hoàn thành",
   cancelled: "Đã hủy",
 };
@@ -20,10 +22,74 @@ export const PAYMENT_LABEL: Record<PaymentMethod, string> = {
 // Trạng thái nào được chuyển sang trạng thái nào.
 // "Đã hủy" là trạng thái cuối: kho đã được hoàn lại nên không cho mở lại.
 export const STATUS_TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
-  pending: ["completed", "cancelled"],
+  pending: ["shipping", "completed", "cancelled"],
+  shipping: ["completed", "cancelled"],
   completed: ["cancelled"],
   cancelled: [],
 };
+
+// Các bước của một đơn xử lý bình thường (đơn bị hủy nằm ngoài luồng này)
+export const STATUS_FLOW: OrderStatus[] = [
+  "pending",
+  "shipping",
+  "completed",
+];
+
+// Bước tiếp theo khi bấm thao tác nhanh ở danh sách đơn
+export const NEXT_STATUS: Partial<Record<OrderStatus, OrderStatus>> = {
+  pending: "shipping",
+  shipping: "completed",
+};
+
+export const STATUS_ACTION_LABEL: Partial<Record<OrderStatus, string>> = {
+  shipping: "🚚 Giao hàng",
+  completed: "✓ Hoàn thành đơn",
+};
+
+export const OTHER_CANCEL_REASON = "Khác";
+
+export const CANCEL_REASONS = [
+  "Khách đổi ý, không muốn mua nữa",
+  "Khách không nghe máy / không nhận hàng",
+  "Hết hàng hoặc sản phẩm bị lỗi",
+  "Nhập nhầm hoặc trùng đơn",
+  OTHER_CANCEL_REASON,
+];
+
+export const PHONE_PATTERN = /^(0|\+84)\d{9}$/;
+
+export function normalizePhone(value: string): string {
+  return value.replace(/[\s.]/g, "");
+}
+
+// Đơn cũ chưa có `history` thì dựng lại từ các mốc thời gian đã lưu
+export function getOrderHistory(order: Order): OrderHistoryEntry[] {
+  if (order.history && order.history.length > 0) {
+    return order.history;
+  }
+
+  const entries: OrderHistoryEntry[] = [
+    {
+      status:
+        order.completedAt === order.createdAt ? "completed" : "pending",
+      at: order.createdAt,
+    },
+  ];
+
+  if (order.completedAt && order.completedAt !== order.createdAt) {
+    entries.push({ status: "completed", at: order.completedAt });
+  }
+
+  if (order.cancelledAt) {
+    entries.push({
+      status: "cancelled",
+      at: order.cancelledAt,
+      note: order.cancelReason,
+    });
+  }
+
+  return entries;
+}
 
 export function calcSubtotal(items: OrderItem[]): number {
   return items.reduce(
@@ -122,8 +188,6 @@ export interface SalesStat {
   revenue: number;
 }
 
-// Doanh số theo sản phẩm (chỉ tính đơn hoàn thành).
-// Doanh thu từng dòng được tính trước giảm giá của cả đơn.
 export function salesByProduct(
   orders: Order[],
 ): Map<string, SalesStat> {
@@ -191,6 +255,7 @@ export function ordersToCsv(orders: Order[]): string {
     "Tổng tiền",
     "Thanh toán",
     "Trạng thái",
+    "Lý do hủy",
   ];
 
   const rows = orders.map((order) => [
@@ -211,6 +276,7 @@ export function ordersToCsv(orders: Order[]): string {
     order.total,
     PAYMENT_LABEL[order.paymentMethod],
     STATUS_LABEL[order.status],
+    order.cancelReason ?? "",
   ]);
 
   return (

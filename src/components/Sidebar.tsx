@@ -1,4 +1,4 @@
-import { NavLink, useLocation } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 
 interface NavEntry {
   to: string;
@@ -7,55 +7,36 @@ interface NavEntry {
   isActive: (pathname: string) => boolean;
 }
 
+// Bỏ dấu "/" ở cuối để "/orders/new/" vẫn khớp
+const normalize = (p: string) => (p.length > 1 ? p.replace(/\/+$/, "") : p);
+
 const NAV_ITEMS: NavEntry[] = [
-  {
-    to: "/",
-    icon: "⌂",
-    label: "Dashboard",
-    isActive: (path) => path === "/",
-  },
-  {
-    to: "/orders/new",
-    icon: "＄",
-    label: "New Order",
-    isActive: (path) => path === "/orders/new",
-  },
+  { to: "/", icon: "⌂", label: "Dashboard", isActive: (p) => p === "/" },
+  { to: "/orders/new", icon: "＄", label: "New Order", isActive: (p) => p === "/orders/new" },
   {
     to: "/orders",
     icon: "☰",
     label: "Orders",
-    isActive: (path) =>
-      path.startsWith("/orders") && path !== "/orders/new",
+    isActive: (p) => p.startsWith("/orders") && p !== "/orders/new",
   },
   {
     to: "/products",
     icon: "▣",
     label: "Products",
-    isActive: (path) =>
-      path.startsWith("/products") && path !== "/products/add",
+    isActive: (p) => p.startsWith("/products") && p !== "/products/add",
   },
-  {
-    to: "/products/add",
-    icon: "＋",
-    label: "Add Product",
-    isActive: (path) => path === "/products/add",
-  },
-  {
-    to: "/categories",
-    icon: "◈",
-    label: "Categories",
-    isActive: (path) => path === "/categories",
-  },
+  { to: "/products/add", icon: "＋", label: "Add Product", isActive: (p) => p === "/products/add" },
+  { to: "/categories", icon: "◈", label: "Categories", isActive: (p) => p.startsWith("/categories") },
 ];
 
 function Sidebar() {
   const { pathname } = useLocation();
+  const path = normalize(pathname);
 
   return (
     <aside className="sidebar no-print">
       <div className="logo">
         <div className="logo-icon">S</div>
-
         <div>
           <h1>Sales</h1>
           <span>Management</span>
@@ -66,25 +47,20 @@ function Sidebar() {
         <p className="menu-title">MENU</p>
 
         {NAV_ITEMS.map((item) => (
-          <NavLink
+          <Link
             key={item.to}
             to={item.to}
-            className={
-              item.isActive(pathname)
-                ? "nav-item active"
-                : "nav-item"
-            }
+            className={item.isActive(path) ? "nav-item active" : "nav-item"}
           >
             <span className="nav-icon">{item.icon}</span>
             <span>{item.label}</span>
-          </NavLink>
+          </Link>
         ))}
       </nav>
 
       <div className="sidebar-bottom">
         <div className="user-card">
           <div className="avatar">A</div>
-
           <div>
             <strong>Admin</strong>
             <span>Administrator</span>

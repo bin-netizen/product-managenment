@@ -41,7 +41,7 @@ function Categories() {
           </p>
 
           <Link
-            to="/products/add"
+            to="/add"
             className="primary-button"
           >
             + Thêm sản phẩm

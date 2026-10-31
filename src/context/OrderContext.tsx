@@ -2,6 +2,7 @@ import {
   createContext,
   useContext,
   useEffect,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -9,12 +10,16 @@ import {
 import type {
   NewOrderInput,
   Order,
+  OrderInfoInput,
   OrderStatus,
 } from "../types/order";
 import {
   calcSubtotal,
   calcTotal,
+  getOrderHistory,
   nextOrderCode,
+  normalizePhone,
+  PHONE_PATTERN,
   STATUS_TRANSITIONS,
 } from "../utils/orders";
 import { saveToStorage } from "../utils/storage";
@@ -32,10 +37,15 @@ interface OrderContextType {
 
   createOrder: (input: NewOrderInput) => Result<{ order: Order }>;
 
+  // Hủy đơn bắt buộc có lý do (options.reason)
   updateOrderStatus: (
     id: string,
     status: OrderStatus,
+    options?: { reason?: string },
   ) => Result;
+
+  // Sửa thông tin khách / thanh toán / ghi chú (không sửa sản phẩm trong đơn)
+  updateOrderInfo: (id: string, info: OrderInfoInput) => Result;
 }
 
 const OrderContext = createContext<
@@ -68,7 +78,13 @@ export function OrderProvider({
   const { products, adjustStock } = useProducts();
 
   const [orders, setOrders] = useState<Order[]>(loadOrders);
+
+  // Bản đơn hàng mới nhất, cập nhật ngay trong handler để bấm hai lần liên tiếp
+  // (ví dụ double-click "Hủy đơn") không hoàn kho hai lần.
+  const ordersRef = useRef(orders);
+
   useEffect(() => {
+    ordersRef.current = orders;
     saveToStorage(STORAGE_KEY, orders);
   }, [orders]);
 
@@ -201,6 +217,7 @@ export function OrderProvider({
       createdAt: now,
       completedAt:
         input.status === "completed" ? now : undefined,
+      history: [{ status: input.status, at: now }],
     };
 
     // Trừ kho ngay khi tạo đơn (giữ hàng), kể cả đơn đang chờ xử lý
@@ -217,11 +234,24 @@ export function OrderProvider({
     return { ok: true, order };
   };
 
+  const commitOrder = (updated: Order) => {
+    ordersRef.current = ordersRef.current.map((item) =>
+      item.id === updated.id ? updated : item,
+    );
+
+    setOrders((current) =>
+      current.map((item) =>
+        item.id === updated.id ? updated : item,
+      ),
+    );
+  };
+
   const updateOrderStatus = (
     id: string,
     status: OrderStatus,
+    options?: { reason?: string },
   ): Result => {
-    const order = orders.find((item) => item.id === id);
+    const order = ordersRef.current.find((item) => item.id === id);
 
     if (!order) {
       return { ok: false, error: "Không tìm thấy đơn hàng." };
@@ -234,6 +264,46 @@ export function OrderProvider({
       };
     }
 
+    const reason = options?.reason?.trim() ?? "";
+
+    if (status === "cancelled") {
+      if (!reason) {
+        return {
+          ok: false,
+          error: "Vui lòng chọn hoặc nhập lý do hủy đơn.",
+        };
+      }
+
+      if (reason.length > 300) {
+        return {
+          ok: false,
+          error: "Lý do hủy tối đa 300 ký tự.",
+        };
+      }
+    }
+
+    const now = new Date().toISOString();
+
+    commitOrder({
+      ...order,
+      status,
+      updatedAt: now,
+      completedAt:
+        status === "completed" ? now : order.completedAt,
+      cancelledAt:
+        status === "cancelled" ? now : order.cancelledAt,
+      cancelReason:
+        status === "cancelled" ? reason : order.cancelReason,
+      history: [
+        ...getOrderHistory(order),
+        {
+          status,
+          at: now,
+          note: status === "cancelled" ? reason : undefined,
+        },
+      ],
+    });
+
     // Hủy đơn thì hoàn hàng về kho (bỏ qua sản phẩm đã bị xóa)
     if (status === "cancelled") {
       adjustStock(
@@ -245,26 +315,53 @@ export function OrderProvider({
       );
     }
 
-    const now = new Date().toISOString();
+    return { ok: true };
+  };
 
-    setOrders((current) =>
-      current.map((item) =>
-        item.id === id
-          ? {
-              ...item,
-              status,
-              completedAt:
-                status === "completed"
-                  ? now
-                  : item.completedAt,
-              cancelledAt:
-                status === "cancelled"
-                  ? now
-                  : item.cancelledAt,
-            }
-          : item,
-      ),
-    );
+  const updateOrderInfo = (
+    id: string,
+    info: OrderInfoInput,
+  ): Result => {
+    const order = ordersRef.current.find((item) => item.id === id);
+
+    if (!order) {
+      return { ok: false, error: "Không tìm thấy đơn hàng." };
+    }
+
+    if (order.status === "cancelled") {
+      return {
+        ok: false,
+        error: "Đơn đã hủy không thể chỉnh sửa.",
+      };
+    }
+
+    const customerName = info.customerName.trim();
+    const customerPhone = normalizePhone(info.customerPhone);
+    const note = info.note.trim();
+
+    if (customerName.length > 100) {
+      return { ok: false, error: "Tên khách hàng tối đa 100 ký tự." };
+    }
+
+    if (customerPhone && !PHONE_PATTERN.test(customerPhone)) {
+      return {
+        ok: false,
+        error: "Số điện thoại không hợp lệ (ví dụ: 0901234567).",
+      };
+    }
+
+    if (note.length > 500) {
+      return { ok: false, error: "Ghi chú tối đa 500 ký tự." };
+    }
+
+    commitOrder({
+      ...order,
+      customerName,
+      customerPhone,
+      note,
+      paymentMethod: info.paymentMethod,
+      updatedAt: new Date().toISOString(),
+    });
 
     return { ok: true };
   };
@@ -276,6 +373,7 @@ export function OrderProvider({
         getOrderById,
         createOrder,
         updateOrderStatus,
+        updateOrderInfo,
       }}
     >
       {children}

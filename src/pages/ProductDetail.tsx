@@ -5,11 +5,19 @@ import { useOrders } from "../context/OrderContext";
 import { useProducts } from "../context/ProductContext";
 import { formatPrice } from "../utils/format";
 import { getSpecGroups } from "../constants/appleCatalog";
+import { MediaPreview, MediaThumb } from "../components/MediaPreview";
+import type { ProductMedia } from "../types/product";
 import { salesByProduct } from "../utils/orders";
 import { availableStock, hasOwnStock } from "../utils/stock";
 
 export default function ProductDetail() {
   const { id } = useParams();
+
+  // key={id}: chuyển sang sản phẩm khác thì reset màu và ảnh đang chọn
+  return <ProductDetailView key={id} id={id} />;
+}
+
+function ProductDetailView({ id }: { id?: string }) {
   const navigate = useNavigate();
 
   const {
@@ -31,6 +39,10 @@ export default function ProductDetail() {
     useState<string | null>(
       product?.colors?.[0]?.id ?? null,
     );
+
+  // null = hiển thị ảnh đầu tiên (ảnh của màu đang chọn hoặc ảnh đại diện)
+  const [activeSlideId, setActiveSlideId] =
+    useState<string | null>(null);
 
   if (!product) {
     return (
@@ -64,6 +76,42 @@ export default function ProductDetail() {
 
   const displayImage =
     selectedColor?.image || product.image;
+
+  // Thư viện: ảnh của màu / ảnh đại diện đứng đầu, sau đó là ảnh và video đã thêm
+  const slides: ProductMedia[] = [];
+
+  if (displayImage) {
+    slides.push({ id: "cover", type: "image", url: displayImage });
+  }
+
+  for (const item of product.media ?? []) {
+    if (item.url && item.url !== displayImage) {
+      slides.push(item);
+    }
+  }
+
+  const activeIndex = Math.max(
+    0,
+    slides.findIndex((slide) => slide.id === activeSlideId),
+  );
+  const activeSlide = slides[activeIndex];
+
+  const goToSlide = (step: number) => {
+    if (slides.length < 2) return;
+
+    setActiveSlideId(
+      slides[(activeIndex + step + slides.length) % slides.length].id,
+    );
+  };
+
+  const selectColor = (colorId: string) => {
+    setSelectedColorId(colorId);
+    setActiveSlideId(null); // quay về ảnh của màu vừa chọn
+  };
+
+  const coverAlt = selectedColor
+    ? `${product.name} ${selectedColor.name}`
+    : product.name;
 
   const displayPrice =
     selectedColor?.price ?? product.price;
@@ -126,18 +174,68 @@ export default function ProductDetail() {
         <div className="detail-product-main">
           {/* ẢNH */}
 
-          <div className="detail-image">
-            {displayImage ? (
-              <img
-                src={displayImage}
-                alt={
-                  selectedColor
-                    ? `${product.name} ${selectedColor.name}`
-                    : product.name
-                }
-              />
-            ) : (
-              <span className="detail-image-empty">📦</span>
+          <div className="detail-gallery">
+            <div className="detail-image">
+              {activeSlide ? (
+                <MediaPreview
+                  key={activeSlide.id}
+                  item={activeSlide}
+                  alt={
+                    activeSlide.type === "video"
+                      ? `Video ${product.name}`
+                      : `${coverAlt} (${activeIndex + 1}/${slides.length})`
+                  }
+                />
+              ) : (
+                <span className="detail-image-empty">📦</span>
+              )}
+
+              {slides.length > 1 && (
+                <>
+                  <button
+                    type="button"
+                    className="gallery-nav gallery-nav-prev"
+                    onClick={() => goToSlide(-1)}
+                    aria-label="Ảnh trước"
+                  >
+                    ‹
+                  </button>
+
+                  <button
+                    type="button"
+                    className="gallery-nav gallery-nav-next"
+                    onClick={() => goToSlide(1)}
+                    aria-label="Ảnh tiếp theo"
+                  >
+                    ›
+                  </button>
+
+                  <span className="gallery-counter">
+                    {activeIndex + 1} / {slides.length}
+                  </span>
+                </>
+              )}
+            </div>
+
+            {slides.length > 1 && (
+              <div className="gallery-thumbs">
+                {slides.map((slide, index) => (
+                  <button
+                    type="button"
+                    key={slide.id}
+                    className={
+                      slide.id === activeSlide?.id
+                        ? "gallery-thumb active"
+                        : "gallery-thumb"
+                    }
+                    onClick={() => setActiveSlideId(slide.id)}
+                    aria-label={`${slide.type === "video" ? "Video" : "Ảnh"} ${index + 1}`}
+                    aria-current={slide.id === activeSlide?.id}
+                  >
+                    <MediaThumb item={slide} />
+                  </button>
+                ))}
+              </div>
             )}
           </div>
 
@@ -181,15 +279,9 @@ export default function ProductDetail() {
           ? "color-option active"
           : "color-option"
       }
-      onMouseEnter={() =>
-        setSelectedColorId(color.id)
-      }
-      onFocus={() =>
-        setSelectedColorId(color.id)
-      }
-      onClick={() =>
-        setSelectedColorId(color.id)
-      }
+      onMouseEnter={() => selectColor(color.id)}
+      onFocus={() => selectColor(color.id)}
+      onClick={() => selectColor(color.id)}
       title={`${color.name} - ${formatPrice(color.price)}`}
     >
       <div className="color-option-image">

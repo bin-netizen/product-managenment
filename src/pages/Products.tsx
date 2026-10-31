@@ -1,4 +1,3 @@
-
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 
@@ -12,13 +11,12 @@ type StockFilter = "all" | "in" | "low" | "out";
 const LOW_STOCK_LIMIT = 10;
 
 function Products() {
-  const { products, deleteProduct } = useProducts();
+  const { products } = useProducts();
   const { orders } = useOrders();
 
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("");
   const [stock, setStock] = useState<StockFilter>("all");
-  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const sold = useMemo(() => salesByProduct(orders), [orders]);
 
@@ -51,45 +49,29 @@ function Products() {
       }
 
       if (stock === "out") return product.quantity <= 0;
-      if (stock === "low") {
-        return product.quantity > 0 &&
-          product.quantity <= LOW_STOCK_LIMIT;
-      }
+      if (stock === "low")
+        return (
+          product.quantity > 0 &&
+          product.quantity <= LOW_STOCK_LIMIT
+        );
       if (stock === "in") return product.quantity > LOW_STOCK_LIMIT;
 
       return true;
     });
   }, [products, search, category, stock]);
 
-  async function handleDelete(id: string, name: string) {
-    const confirmed = window.confirm(
-      `Bạn có chắc chắn muốn xóa sản phẩm "${name}" không?`,
-    );
-
-    if (!confirmed) return;
-
-    try {
-      setDeletingId(id);
-      await deleteProduct(id);
-      alert("Xóa sản phẩm thành công!");
-    } catch (error) {
-      console.error("Lỗi xóa sản phẩm:", error);
-      alert("Không thể xóa sản phẩm. Vui lòng thử lại!");
-    } finally {
-      setDeletingId(null);
-    }
-  }
-
   return (
     <div className="page">
       <div className="page-heading">
         <div>
           <span className="eyebrow">PRODUCT CATALOG</span>
+
           <h1>Products</h1>
+
           <p>Danh sách sản phẩm, tồn kho và số lượng đã bán.</p>
         </div>
 
-        <Link to="/products/add" className="primary-button">
+        <Link to="/add" className="primary-button">
           + Thêm sản phẩm
         </Link>
       </div>
@@ -97,9 +79,12 @@ function Products() {
       {products.length === 0 ? (
         <div className="empty-state large">
           <div className="empty-icon">📦</div>
+
           <h3>Chưa có sản phẩm nào</h3>
+
           <p>Bạn chưa thêm sản phẩm vào hệ thống.</p>
-          <Link to="/products/add" className="primary-button">
+
+          <Link to="/add" className="primary-button">
             + Thêm sản phẩm đầu tiên
           </Link>
         </div>
@@ -118,6 +103,7 @@ function Products() {
               onChange={(event) => setCategory(event.target.value)}
             >
               <option value="">Tất cả hãng</option>
+
               {categories.map((item) => (
                 <option key={item} value={item}>
                   {item}
@@ -149,71 +135,56 @@ function Products() {
                   sold.get(product.id)?.quantity ?? 0;
 
                 return (
-                  <div className="product-card" key={product.id}>
-                    <Link
-                      to={`/products/${product.id}`}
-                      className="product-card-link"
-                    >
-                      <div className="product-image">
-                        {product.image ? (
-                          <img
-                            src={product.image}
-                            alt={product.name}
-                          />
-                        ) : (
-                          <div className="product-image-empty">
-                            📦
-                          </div>
-                        )}
+                  <Link
+                    to={`/products/${product.id}`}
+                    className="product-card"
+                    key={product.id}
+                  >
+                    <div className="product-image">
+                      {product.image ? (
+                        <img
+                          src={product.image}
+                          alt={product.name}
+                        />
+                      ) : (
+                        <div className="product-image-empty">
+                          📦
+                        </div>
+                      )}
 
-                        <span className="product-category">
-                          {product.category}
+                      <span className="product-category">
+                        {product.category}
+                      </span>
+                    </div>
+
+                    <div className="product-content">
+                      <h3>{product.name}</h3>
+
+                      <p>{product.description}</p>
+
+                      <div className="product-bottom">
+                        <strong>{formatPrice(product.price)}</strong>
+
+                        <span
+                          className={
+                            product.quantity <= 0
+                              ? "stock out"
+                              : product.quantity <= LOW_STOCK_LIMIT
+                                ? "stock low"
+                                : "stock"
+                          }
+                        >
+                          {product.quantity <= 0
+                            ? "Hết hàng"
+                            : `${product.quantity} trong kho`}
                         </span>
                       </div>
 
-                      <div className="product-content">
-                        <h3>{product.name}</h3>
-                        <p>{product.description}</p>
-
-                        <div className="product-bottom">
-                          <strong>{formatPrice(product.price)}</strong>
-
-                          <span
-                            className={
-                              product.quantity <= 0
-                                ? "stock out"
-                                : product.quantity <= LOW_STOCK_LIMIT
-                                  ? "stock low"
-                                  : "stock"
-                            }
-                          >
-                            {product.quantity <= 0
-                              ? "Hết hàng"
-                              : `${product.quantity} trong kho`}
-                          </span>
-                        </div>
-
-                        <div className="product-sold">
-                          Đã bán: <strong>{soldQty}</strong>
-                        </div>
+                      <div className="product-sold">
+                        Đã bán: <strong>{soldQty}</strong>
                       </div>
-                    </Link>
-
-                    <div className="product-actions">
-                      <button
-                        type="button"
-                        className="delete-button"
-                        disabled={deletingId === product.id}
-                        onClick={() =>
-                          handleDelete(product.id, product.name)
-                        }
-                      >
-                        {deletingId === product.id
-                          ? "Đang xóa..."
-                          : "Xóa sản phẩm"}
-                      </button>
                     </div>
-                  </div>
+                  </Link>
                 );
               })}
             </div>
