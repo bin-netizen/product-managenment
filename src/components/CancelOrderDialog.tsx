@@ -1,7 +1,12 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 
 import type { Order } from "../types/order";
-import { CANCEL_REASONS, OTHER_CANCEL_REASON } from "../utils/orders";
+import { formatPrice } from "../utils/format";
+import {
+  CANCEL_REASONS,
+  installmentPaid,
+  OTHER_CANCEL_REASON,
+} from "../utils/orders";
 
 interface CancelOrderDialogProps {
   order: Order;
@@ -20,6 +25,8 @@ export default function CancelOrderDialog({
   const [choice, setChoice] = useState(CANCEL_REASONS[0]);
   const [custom, setCustom] = useState("");
   const [error, setError] = useState("");
+
+  const paid = installmentPaid(order);
 
   useEffect(() => {
     const dialog = dialogRef.current;
@@ -75,6 +82,13 @@ export default function CancelOrderDialog({
             " Đơn đã hoàn thành sẽ bị trừ khỏi doanh thu."}{" "}
           Thao tác này không thể hoàn tác.
         </p>
+
+        {paid > 0 && (
+          <p className="dialog-warning">
+            Khách đã trả {formatPrice(paid)} cho đơn trả góp này. Hệ
+            thống không tự hoàn tiền, bạn cần hoàn lại cho khách.
+          </p>
+        )}
 
         <fieldset className="reason-list">
           <legend>Lý do hủy đơn</legend>

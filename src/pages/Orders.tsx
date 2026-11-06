@@ -8,12 +8,14 @@ import type { Order, OrderStatus } from "../types/order";
 import { formatPrice } from "../utils/format";
 import {
   formatDateTime,
-  NEXT_STATUS,
+  getAllowedTransitions,
+  getNextStatus,
+  installmentOutstanding,
+  installmentPaid,
   ordersToCsv,
   PAYMENT_LABEL,
   STATUS_ACTION_LABEL,
   STATUS_LABEL,
-  STATUS_TRANSITIONS,
   totalRevenue,
 } from "../utils/orders";
 
@@ -48,6 +50,8 @@ export default function Orders() {
       all: orders.length,
       pending: orders.filter((o) => o.status === "pending").length,
       shipping: orders.filter((o) => o.status === "shipping").length,
+      installment: orders.filter((o) => o.status === "installment")
+        .length,
       completed: orders.filter((o) => o.status === "completed")
         .length,
       cancelled: orders.filter((o) => o.status === "cancelled")
@@ -89,6 +93,15 @@ export default function Orders() {
       );
     });
   }, [orders, status, period, search]);
+
+  const outstanding = useMemo(
+    () =>
+      filtered.reduce(
+        (sum, order) => sum + installmentOutstanding(order),
+        0,
+      ),
+    [filtered],
+  );
 
   const handleExport = () => {
     const blob = new Blob([ordersToCsv(filtered)], {
@@ -145,6 +158,7 @@ export default function Orders() {
     { value: "all", label: "Tất cả" },
     { value: "pending", label: STATUS_LABEL.pending },
     { value: "shipping", label: STATUS_LABEL.shipping },
+    { value: "installment", label: STATUS_LABEL.installment },
     { value: "completed", label: STATUS_LABEL.completed },
     { value: "cancelled", label: STATUS_LABEL.cancelled },
   ];
@@ -250,6 +264,13 @@ export default function Orders() {
               Doanh thu (đơn hoàn thành):{" "}
               <strong>{formatPrice(totalRevenue(filtered))}</strong>
             </span>
+
+            {outstanding > 0 && (
+              <span>
+                Còn phải thu (trả góp):{" "}
+                <strong>{formatPrice(outstanding)}</strong>
+              </span>
+            )}
           </div>
 
           {filtered.length === 0 ? (
@@ -279,7 +300,7 @@ export default function Orders() {
                       0,
                     );
 
-                    const next = NEXT_STATUS[order.status];
+                    const next = getNextStatus(order);
 
                     return (
                       <tr key={order.id}>
@@ -321,6 +342,12 @@ export default function Orders() {
                           <strong className="cell-strong">
                             {formatPrice(order.total)}
                           </strong>
+
+                          {order.installment && (
+                            <span className="cell-sub">
+                              Đã thu {formatPrice(installmentPaid(order))}
+                            </span>
+                          )}
                         </td>
 
                         <td>
@@ -348,7 +375,7 @@ export default function Orders() {
                               </button>
                             )}
 
-                            {STATUS_TRANSITIONS[order.status].includes(
+                            {getAllowedTransitions(order).includes(
                               "cancelled",
                             ) && (
                               <button

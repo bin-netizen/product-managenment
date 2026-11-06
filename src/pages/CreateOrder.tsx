@@ -10,7 +10,11 @@ import {
   formatPrice,
   parsePrice,
 } from "../utils/format";
-import { PAYMENT_LABEL } from "../utils/orders";
+import {
+  calcMonthlyPayment,
+  INSTALLMENT_MONTH_OPTIONS,
+  PAYMENT_LABEL,
+} from "../utils/orders";
 import { availableStock, stockPoolKey } from "../utils/stock";
 
 interface CartLine {
@@ -85,6 +89,8 @@ export default function CreateOrder() {
     "completed",
   );
   const [discountInput, setDiscountInput] = useState("");
+  const [installmentMonths, setInstallmentMonths] = useState("12");
+  const [downPaymentInput, setDownPaymentInput] = useState("");
   const [error, setError] = useState("");
 
   const categories = useMemo(
@@ -160,6 +166,14 @@ export default function CreateOrder() {
 
   const discount = Math.min(parsePrice(discountInput), subtotal);
   const total = subtotal - discount;
+
+  const isInstallment = paymentMethod === "installment";
+  const downPayment = parsePrice(downPaymentInput);
+  const monthlyPayment = calcMonthlyPayment(
+    total,
+    downPayment,
+    Number(installmentMonths),
+  );
   const itemCount = lines.reduce(
     (sum, line) => sum + line.quantity,
     0,
@@ -270,6 +284,13 @@ export default function CreateOrder() {
       return;
     }
 
+    if (isInstallment && downPayment >= total) {
+      setError(
+        "Tiền trả trước phải nhỏ hơn tổng thanh toán của đơn.",
+      );
+      return;
+    }
+
     submittedRef.current = true;
 
     const result = createOrder({
@@ -277,7 +298,11 @@ export default function CreateOrder() {
       customerPhone: phone,
       note,
       paymentMethod,
-      status,
+      // Đơn trả góp ở trạng thái "Đang trả góp" cho đến khi khách trả đủ
+      status: isInstallment ? "installment" : status,
+      installment: isInstallment
+        ? { months: Number(installmentMonths), downPayment }
+        : undefined,
       discount,
       items: lines.map((line) => ({
         productId: line.productId,
@@ -628,6 +653,7 @@ export default function CreateOrder() {
                   </select>
                 </div>
 
+                {!isInstallment && (
                 <div className="form-group">
                   <label htmlFor="status">Trạng thái</label>
                   <select
@@ -649,6 +675,7 @@ export default function CreateOrder() {
                     </option>
                   </select>
                 </div>
+                )}
               </div>
 
               <div className="form-group">
@@ -665,6 +692,69 @@ export default function CreateOrder() {
                   }
                 />
               </div>
+
+              {isInstallment && (
+                <div className="installment-box">
+                  <div className="sale-form-row">
+                    <div className="form-group">
+                      <label htmlFor="installmentMonths">
+                        Số tháng trả góp
+                      </label>
+
+                      <select
+                        id="installmentMonths"
+                        value={installmentMonths}
+                        onChange={(event) =>
+                          setInstallmentMonths(event.target.value)
+                        }
+                      >
+                        {INSTALLMENT_MONTH_OPTIONS.map((months) => (
+                          <option key={months} value={months}>
+                            {months} tháng
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="form-group">
+                      <label htmlFor="downPayment">
+                        Trả trước (đ)
+                      </label>
+
+                      <input
+                        id="downPayment"
+                        inputMode="numeric"
+                        placeholder="0"
+                        value={downPaymentInput}
+                        onChange={(event) =>
+                          setDownPaymentInput(
+                            formatInputPrice(event.target.value),
+                          )
+                        }
+                      />
+                    </div>
+                  </div>
+
+                  <div className="installment-preview">
+                    <div>
+                      <span>Còn lại sau trả trước</span>
+                      <strong>
+                        {formatPrice(Math.max(0, total - downPayment))}
+                      </strong>
+                    </div>
+
+                    <div>
+                      <span>Dự kiến góp mỗi tháng</span>
+                      <strong>{formatPrice(monthlyPayment)}</strong>
+                    </div>
+                  </div>
+
+                  <small>
+                    Không tính lãi. Đơn ở trạng thái "Đang trả góp" cho
+                    đến khi bạn ghi nhận khách trả đủ và bấm Hoàn thành.
+                  </small>
+                </div>
+              )}
 
               <div className="form-group">
                 <label htmlFor="note">Ghi chú</label>

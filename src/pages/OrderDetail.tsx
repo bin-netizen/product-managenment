@@ -2,6 +2,7 @@ import { useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router-dom";
 
 import CancelOrderDialog from "../components/CancelOrderDialog";
+import InstallmentPanel from "../components/InstallmentPanel";
 import ProductThumb from "../components/ProductThumb";
 import StatusBadge from "../components/StatusBadge";
 import { useOrders } from "../context/OrderContext";
@@ -10,12 +11,15 @@ import type { OrderInfoInput, PaymentMethod } from "../types/order";
 import { formatPrice } from "../utils/format";
 import {
   formatDateTime,
+  getAllowedTransitions,
+  getNextStatus,
   getOrderHistory,
+  getStatusFlow,
+  installmentPaid,
+  installmentRemaining,
   PAYMENT_LABEL,
   STATUS_ACTION_LABEL,
-  STATUS_FLOW,
   STATUS_LABEL,
-  STATUS_TRANSITIONS,
 } from "../utils/orders";
 
 export default function OrderDetail() {
@@ -64,13 +68,20 @@ function OrderDetailView({ id }: { id?: string }) {
   }
 
   const isCancelled = order.status === "cancelled";
-  const transitions = STATUS_TRANSITIONS[order.status];
+  const transitions = getAllowedTransitions(order);
   const forwardSteps = transitions.filter(
     (status) => status !== "cancelled",
   );
   const canCancel = transitions.includes("cancelled");
   const history = getOrderHistory(order);
-  const flowIndex = STATUS_FLOW.indexOf(order.status);
+  const flow = getStatusFlow(order);
+  const flowIndex = flow.indexOf(order.status);
+  const nextStatus = getNextStatus(order);
+  const remaining = installmentRemaining(order);
+  const completeBlocked =
+    order.paymentMethod === "installment" &&
+    order.status === "installment" &&
+    remaining > 0;
 
   const handleAdvance = (status: (typeof transitions)[number]) => {
     const result = updateOrderStatus(order.id, status);
@@ -184,7 +195,7 @@ function OrderDetailView({ id }: { id?: string }) {
         ) : (
           <>
             <ol className="order-steps" aria-label="Tiến trình đơn hàng">
-              {STATUS_FLOW.map((status, index) => (
+              {flow.map((status, index) => (
                 <li
                   key={status}
                   className={
@@ -210,13 +221,16 @@ function OrderDetailView({ id }: { id?: string }) {
             </ol>
 
             <div className="order-process-actions">
-              {forwardSteps.map((status, index) => (
+              {forwardSteps.map((status) => (
                 <button
                   key={status}
                   type="button"
                   className={
-                    index === 0 ? "primary-button" : "secondary-button"
+                    status === nextStatus
+                      ? "primary-button"
+                      : "secondary-button"
                   }
+                  disabled={status === "completed" && completeBlocked}
                   onClick={() => handleAdvance(status)}
                 >
                   {STATUS_ACTION_LABEL[status]}
@@ -242,6 +256,14 @@ function OrderDetailView({ id }: { id?: string }) {
                 </button>
               )}
             </div>
+
+            {completeBlocked && (
+              <p className="order-process-hint">
+                Khách còn phải trả {formatPrice(remaining)}. Ghi nhận đủ
+                các khoản thu ở mục Trả góp bên dưới thì mới hoàn thành
+                được đơn.
+              </p>
+            )}
           </>
         )}
       </section>
@@ -303,6 +325,7 @@ function OrderDetailView({ id }: { id?: string }) {
 
               <select
                 id="edit-payment"
+                disabled={order.paymentMethod === "installment"}
                 value={form.paymentMethod}
                 onChange={(event) =>
                   setForm({
@@ -311,7 +334,13 @@ function OrderDetailView({ id }: { id?: string }) {
                   })
                 }
               >
-                {Object.entries(PAYMENT_LABEL).map(([value, label]) => (
+                {Object.entries(PAYMENT_LABEL)
+                  .filter(([value]) =>
+                    order.paymentMethod === "installment"
+                      ? value === "installment"
+                      : value !== "installment",
+                  )
+                  .map(([value, label]) => (
                   <option key={value} value={value}>
                     {label}
                   </option>
@@ -349,6 +378,10 @@ function OrderDetailView({ id }: { id?: string }) {
           </div>
         </form>
       )}
+
+      {/* TRẢ GÓP */}
+
+      <InstallmentPanel order={order} />
 
       {/* HÓA ĐƠN */}
 
@@ -496,6 +529,20 @@ function OrderDetailView({ id }: { id?: string }) {
               <span>Tổng thanh toán</span>
               <strong>{formatPrice(order.total)}</strong>
             </div>
+
+            {order.installment && (
+              <>
+                <div>
+                  <span>Đã thu ({order.installment.months} tháng)</span>
+                  <strong>{formatPrice(installmentPaid(order))}</strong>
+                </div>
+
+                <div>
+                  <span>Còn phải thu</span>
+                  <strong>{formatPrice(remaining)}</strong>
+                </div>
+              </>
+            )}
           </div>
         </div>
       </section>

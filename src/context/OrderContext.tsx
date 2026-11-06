@@ -16,12 +16,14 @@ import type {
 import {
   calcSubtotal,
   calcTotal,
+  getAllowedTransitions,
   getOrderHistory,
+  installmentRemaining,
   nextOrderCode,
   normalizePhone,
   PHONE_PATTERN,
-  STATUS_TRANSITIONS,
 } from "../utils/orders";
+import { formatPrice } from "../utils/format";
 import { saveToStorage } from "../utils/storage";
 import { findColor, hasOwnStock } from "../utils/stock";
 import { useProducts } from "./ProductContext";
@@ -46,6 +48,15 @@ interface OrderContextType {
 
   // Sửa thông tin khách / thanh toán / ghi chú (không sửa sản phẩm trong đơn)
   updateOrderInfo: (id: string, info: OrderInfoInput) => Result;
+
+  // Ghi nhận một lần khách trả tiền của đơn trả góp
+  addInstallmentPayment: (
+    id: string,
+    input: { amount: number; note?: string },
+  ) => Result;
+
+  // Xóa một khoản thu ghi nhầm
+  removeInstallmentPayment: (id: string, paymentId: string) => Result;
 }
 
 const OrderContext = createContext<
@@ -200,7 +211,72 @@ export function OrderProvider({
       };
     }
 
+    const total = calcTotal(subtotal, input.discount);
     const now = new Date().toISOString();
+
+    let installment: Order["installment"];
+
+    if (input.paymentMethod === "installment") {
+      const plan = input.installment;
+
+      if (!plan) {
+        return {
+          ok: false,
+          error: "Vui lòng nhập thông tin trả góp.",
+        };
+      }
+
+      if (
+        !Number.isInteger(plan.months) ||
+        plan.months < 1 ||
+        plan.months > 36
+      ) {
+        return {
+          ok: false,
+          error: "Số tháng trả góp phải từ 1 đến 36.",
+        };
+      }
+
+      if (
+        !Number.isInteger(plan.downPayment) ||
+        plan.downPayment < 0 ||
+        plan.downPayment >= total
+      ) {
+        return {
+          ok: false,
+          error:
+            "Tiền trả trước phải từ 0 và nhỏ hơn tổng thanh toán của đơn.",
+        };
+      }
+
+      if (input.status === "completed") {
+        return {
+          ok: false,
+          error: "Đơn trả góp chỉ hoàn thành khi khách đã trả đủ.",
+        };
+      }
+
+      installment = {
+        months: plan.months,
+        downPayment: plan.downPayment,
+        payments:
+          plan.downPayment > 0
+            ? [
+                {
+                  id: crypto.randomUUID(),
+                  amount: plan.downPayment,
+                  paidAt: now,
+                  note: "Trả trước",
+                },
+              ]
+            : [],
+      };
+    } else if (input.status === "installment") {
+      return {
+        ok: false,
+        error: 'Trạng thái "Đang trả góp" chỉ dùng cho đơn trả góp.',
+      };
+    }
 
     const order: Order = {
       id: crypto.randomUUID(),
@@ -213,11 +289,12 @@ export function OrderProvider({
       items: input.items,
       subtotal,
       discount: input.discount,
-      total: calcTotal(subtotal, input.discount),
+      total,
       createdAt: now,
       completedAt:
         input.status === "completed" ? now : undefined,
       history: [{ status: input.status, at: now }],
+      installment,
     };
 
     // Trừ kho ngay khi tạo đơn (giữ hàng), kể cả đơn đang chờ xử lý
@@ -257,10 +334,22 @@ export function OrderProvider({
       return { ok: false, error: "Không tìm thấy đơn hàng." };
     }
 
-    if (!STATUS_TRANSITIONS[order.status].includes(status)) {
+    if (!getAllowedTransitions(order).includes(status)) {
       return {
         ok: false,
         error: "Không thể chuyển đơn sang trạng thái này.",
+      };
+    }
+
+    // Đơn trả góp chỉ hoàn thành khi khách đã trả đủ
+    if (
+      status === "completed" &&
+      order.paymentMethod === "installment" &&
+      installmentRemaining(order) > 0
+    ) {
+      return {
+        ok: false,
+        error: `Khách còn phải trả ${formatPrice(installmentRemaining(order))}. Hãy ghi nhận đủ các khoản thu trước khi hoàn thành đơn.`,
       };
     }
 
@@ -354,6 +443,19 @@ export function OrderProvider({
       return { ok: false, error: "Ghi chú tối đa 500 ký tự." };
     }
 
+    // Đổi phương thức sang/khỏi "Trả góp" sẽ làm lệch sổ thu tiền nên không cho phép
+    if (
+      info.paymentMethod !== order.paymentMethod &&
+      (order.paymentMethod === "installment" ||
+        info.paymentMethod === "installment")
+    ) {
+      return {
+        ok: false,
+        error:
+          "Không thể đổi phương thức thanh toán sang hoặc khỏi Trả góp. Hãy hủy đơn và tạo đơn mới.",
+      };
+    }
+
     commitOrder({
       ...order,
       customerName,
@@ -361,6 +463,95 @@ export function OrderProvider({
       note,
       paymentMethod: info.paymentMethod,
       updatedAt: new Date().toISOString(),
+    });
+
+    return { ok: true };
+  };
+
+  const addInstallmentPayment = (
+    id: string,
+    input: { amount: number; note?: string },
+  ): Result => {
+    const order = ordersRef.current.find((item) => item.id === id);
+
+    if (!order || !order.installment) {
+      return { ok: false, error: "Đây không phải đơn trả góp." };
+    }
+
+    if (order.status === "completed" || order.status === "cancelled") {
+      return {
+        ok: false,
+        error: "Đơn đã hoàn thành hoặc đã hủy, không ghi nhận thêm được.",
+      };
+    }
+
+    if (!Number.isInteger(input.amount) || input.amount <= 0) {
+      return { ok: false, error: "Số tiền phải lớn hơn 0." };
+    }
+
+    const remaining = installmentRemaining(order);
+
+    if (input.amount > remaining) {
+      return {
+        ok: false,
+        error: `Số tiền vượt quá phần còn phải thu (${formatPrice(remaining)}).`,
+      };
+    }
+
+    const note = input.note?.trim() ?? "";
+
+    if (note.length > 200) {
+      return { ok: false, error: "Ghi chú tối đa 200 ký tự." };
+    }
+
+    const now = new Date().toISOString();
+
+    commitOrder({
+      ...order,
+      updatedAt: now,
+      installment: {
+        ...order.installment,
+        payments: [
+          ...order.installment.payments,
+          {
+            id: crypto.randomUUID(),
+            amount: input.amount,
+            paidAt: now,
+            note: note || undefined,
+          },
+        ],
+      },
+    });
+
+    return { ok: true };
+  };
+
+  const removeInstallmentPayment = (
+    id: string,
+    paymentId: string,
+  ): Result => {
+    const order = ordersRef.current.find((item) => item.id === id);
+
+    if (!order || !order.installment) {
+      return { ok: false, error: "Đây không phải đơn trả góp." };
+    }
+
+    if (order.status === "completed" || order.status === "cancelled") {
+      return {
+        ok: false,
+        error: "Đơn đã hoàn thành hoặc đã hủy, không sửa được khoản thu.",
+      };
+    }
+
+    commitOrder({
+      ...order,
+      updatedAt: new Date().toISOString(),
+      installment: {
+        ...order.installment,
+        payments: order.installment.payments.filter(
+          (payment) => payment.id !== paymentId,
+        ),
+      },
     });
 
     return { ok: true };
@@ -374,6 +565,8 @@ export function OrderProvider({
         createOrder,
         updateOrderStatus,
         updateOrderInfo,
+        addInstallmentPayment,
+        removeInstallmentPayment,
       }}
     >
       {children}

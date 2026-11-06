@@ -1,10 +1,11 @@
 export type OrderStatus =
   | "pending"
   | "shipping"
+  | "installment"
   | "completed"
   | "cancelled";
 
-export type PaymentMethod = "cash" | "transfer" | "cod";
+export type PaymentMethod = "cash" | "transfer" | "cod" | "installment";
 
 export interface OrderItem {
   productId: string;
@@ -21,6 +22,21 @@ export interface OrderHistoryEntry {
   status: OrderStatus;
   at: string;
   note?: string;
+}
+
+// Một lần khách trả tiền (gồm cả khoản trả trước nếu có)
+export interface InstallmentPayment {
+  id: string;
+  amount: number;
+  paidAt: string;
+  note?: string;
+}
+
+// Kế hoạch trả góp của đơn. Không tính lãi: tổng khách phải trả = tổng đơn.
+export interface InstallmentPlan {
+  months: number;
+  downPayment: number;
+  payments: InstallmentPayment[];
 }
 
 export interface Order {
@@ -46,6 +62,8 @@ export interface Order {
   // Các trường dưới đây đều optional để đơn cũ trong localStorage vẫn hợp lệ.
   cancelReason?: string;
   history?: OrderHistoryEntry[];
+  // Chỉ có khi paymentMethod === "installment"
+  installment?: InstallmentPlan;
   updatedAt?: string;
 }
 
@@ -57,6 +75,8 @@ export interface NewOrderInput {
   status: Exclude<OrderStatus, "cancelled">;
   discount: number;
   items: OrderItem[];
+  // Bắt buộc khi paymentMethod === "installment"
+  installment?: { months: number; downPayment: number };
 }
 
 // Thông tin được phép sửa sau khi tạo đơn (không gồm sản phẩm, vì sửa sản phẩm sẽ ảnh hưởng kho)
