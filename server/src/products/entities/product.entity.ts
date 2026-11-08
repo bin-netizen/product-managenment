@@ -8,9 +8,19 @@ import {
 
 @Entity('products')
 export class Product {
-  // ID tự tăng, khóa chính
+  // ID tự tăng của MySQL
   @PrimaryGeneratedColumn()
   id: number;
+
+  // ID UUID từ Frontend, giữ liên kết với đơn hàng cũ
+  @Column({
+    name: 'client_id',
+    type: 'varchar',
+    length: 100,
+    nullable: true,
+    unique: true,
+  })
+  clientId: string | null;
 
   // Tên sản phẩm
   @Column({ type: 'varchar', length: 150 })
@@ -50,7 +60,7 @@ export class Product {
   })
   condition: string | null;
 
-  // Thời gian bảo hành (tháng)
+  // Thời gian bảo hành
   @Column({
     name: 'warranty_months',
     type: 'int',
@@ -66,7 +76,7 @@ export class Product {
   })
   price: number;
 
-  // Số lượng tồn kho, liên kết với cột stock trong MySQL
+  // Số lượng tồn kho
   @Column({
     name: 'stock',
     type: 'int',
@@ -74,21 +84,28 @@ export class Product {
   })
   quantity: number;
 
-  // Đường dẫn hình ảnh
+  // Hình ảnh chính
   @Column({
-    type: 'text',
+    type: 'longtext',
     nullable: true,
   })
   image: string | null;
 
-  // Mô tả sản phẩm
+  // Thư viện ảnh và video
+  @Column({
+    type: 'json',
+    nullable: true,
+  })
+  media: Record<string, unknown>[] | null;
+
+  // Mô tả
   @Column({
     type: 'text',
     nullable: true,
   })
   description: string | null;
 
-  // Danh sách màu sắc và thông tin từng màu
+  // Màu sắc và tồn kho từng màu
   @Column({
     type: 'json',
     nullable: true,
@@ -102,14 +119,14 @@ export class Product {
   })
   specs: Record<string, unknown> | null;
 
-  // Danh sách tính năng
+  // Tính năng
   @Column({
     type: 'json',
     nullable: true,
   })
   features: string[] | null;
 
-  // Thời điểm tạo sản phẩm
+  // Ngày tạo
   @CreateDateColumn({
     name: 'created_at',
     type: 'datetime',

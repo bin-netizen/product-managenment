@@ -64,6 +64,9 @@ export interface Order {
   history?: OrderHistoryEntry[];
   // Chỉ có khi paymentMethod === "installment"
   installment?: InstallmentPlan;
+
+  // Mã khách hàng (KH0001...), cấp theo số điện thoại. Đơn khách lẻ không có mã.
+  customerCode?: string;
   updatedAt?: string;
 }
 

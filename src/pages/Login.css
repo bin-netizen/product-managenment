@@ -1,0 +1,509 @@
+/* Login page — mọi class đều có tiền tố "lg-" để không đụng CSS cũ (.login-*) */
+
+/* Nền là thiên hà đen nên trang luôn dùng bảng màu tối (không phụ thuộc chế độ sáng/tối của Windows) */
+.lg-page {
+  --lg-ink: #f5f5f7;
+  --lg-muted: rgba(245, 245, 247, 0.62);
+  --lg-line: rgba(255, 255, 255, 0.22);
+  --lg-accent: #2997ff;
+  --lg-btn: #0071e3;
+  --lg-btn-hover: #0a7cf0;
+  --lg-danger: #ff6961;
+  --lg-danger-bg: rgba(255, 69, 58, 0.16);
+  --lg-warn: #ffd60a;
+
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+  background: #000000;
+  color: var(--lg-ink);
+  color-scheme: dark;
+  font-family:
+    -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Inter,
+    Roboto, "Helvetica Neue", Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+.lg-page *,
+.lg-page *::before,
+.lg-page *::after {
+  box-sizing: border-box;
+}
+
+/* =========================================================
+   Lớp nền
+   ========================================================= */
+
+/* Galaxy1 tự đặt vị trí phủ kín qua prop style; ở đây chỉ xếp lớp */
+.lg-galaxy {
+  z-index: 0;
+}
+
+/* Lớp tối nhẹ: trái để chữ dễ đọc, phải để form nổi bật */
+.lg-shade {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background:
+    linear-gradient(
+      90deg,
+      rgba(0, 0, 0, 0.72) 0%,
+      rgba(0, 0, 0, 0.12) 42%,
+      rgba(0, 0, 0, 0.12) 58%,
+      rgba(0, 0, 0, 0.5) 100%
+    ),
+    linear-gradient(0deg, rgba(0, 0, 0, 0.55), transparent 26%);
+}
+
+/* =========================================================
+   Cột trái: chữ giới thiệu
+   ========================================================= */
+
+.lg-hero {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 40px;
+  padding: 40px 56px;
+  /* Không chặn thao tác kéo xoay thiên hà ở phía sau */
+  pointer-events: none;
+}
+
+.lg-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.lg-brand-mark {
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 10px;
+  backdrop-filter: blur(8px);
+}
+
+.lg-hero-body {
+  max-width: 520px;
+  animation: lg-rise 700ms 120ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.lg-headline {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  font-size: clamp(36px, 4.4vw, 60px);
+  line-height: 1.06;
+  font-weight: 700;
+  letter-spacing: -0.035em;
+  color: rgba(255, 255, 255, 0.55);
+}
+
+/* Từ chạy: chiếm một dòng riêng nên bố cục không bị giật khi đổi từ */
+.lg-word {
+  display: block;
+  min-height: 1.1em;
+  color: #fff;
+  animation: lg-word-in 520ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.lg-hero-note {
+  margin: 24px 0 0;
+  max-width: 38ch;
+  font-size: 16px;
+  line-height: 1.55;
+  color: rgba(255, 255, 255, 0.68);
+}
+
+.lg-hero-foot {
+  margin: 0;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.52);
+}
+
+/* =========================================================
+   Cột phải: form kính mờ
+   ========================================================= */
+
+.lg-main {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  padding: 40px 24px;
+  /* Vùng trống để chuột kéo xoay thiên hà; chỉ thẻ form nhận chuột */
+  pointer-events: none;
+}
+
+.lg-card {
+  pointer-events: auto;
+  width: min(420px, 100%);
+  padding: 40px 36px 32px;
+  background: rgba(16, 16, 20, 0.58);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 24px;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    0 30px 60px -30px rgba(0, 0, 0, 0.85);
+  -webkit-backdrop-filter: blur(28px) saturate(160%);
+  backdrop-filter: blur(28px) saturate(160%);
+  animation: lg-enter 520ms 80ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.lg-card--shake {
+  animation: lg-shake 380ms cubic-bezier(0.36, 0.07, 0.19, 0.97) both;
+}
+
+.lg-header h1 {
+  margin: 0 0 8px;
+  font-size: 28px;
+  line-height: 1.15;
+  font-weight: 650;
+  letter-spacing: -0.025em;
+}
+
+.lg-header p {
+  margin: 0 0 28px;
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--lg-muted);
+}
+
+/* ---------- Ô nhập (nhãn nổi) ---------- */
+
+.lg-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.lg-field {
+  position: relative;
+}
+
+.lg-field input {
+  width: 100%;
+  height: 58px;
+  padding: 24px 48px 8px 16px;
+  font: inherit;
+  font-size: 16px; /* >=16px để iOS không tự zoom */
+  color: var(--lg-ink);
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--lg-line);
+  border-radius: 12px;
+  outline: none;
+  transition:
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    background-color 160ms ease;
+}
+
+.lg-field input:hover {
+  border-color: rgba(255, 255, 255, 0.4);
+}
+
+.lg-field input:focus {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: var(--lg-accent);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--lg-accent) 28%, transparent);
+}
+
+.lg-field label {
+  position: absolute;
+  left: 17px;
+  top: 29px;
+  transform: translateY(-50%);
+  font-size: 16px;
+  color: var(--lg-muted);
+  pointer-events: none;
+  transition:
+    top 140ms ease,
+    font-size 140ms ease,
+    color 140ms ease;
+}
+
+/* Nhãn nổi lên khi focus, đã có chữ, hoặc trình duyệt tự điền */
+.lg-field input:focus + label,
+.lg-field input:not(:placeholder-shown) + label,
+.lg-field input:-webkit-autofill + label {
+  top: 14px;
+  font-size: 12px;
+}
+
+.lg-field input:focus + label {
+  color: var(--lg-accent);
+}
+
+.lg-field input:-webkit-autofill {
+  -webkit-text-fill-color: var(--lg-ink);
+  transition: background-color 9999s ease-out;
+}
+
+.lg-field--invalid input,
+.lg-field--invalid input:hover {
+  border-color: var(--lg-danger);
+}
+
+.lg-field--invalid input:focus {
+  border-color: var(--lg-danger);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--lg-danger) 24%, transparent);
+}
+
+.lg-field--invalid input:focus + label,
+.lg-field--invalid label {
+  color: var(--lg-danger);
+}
+
+.lg-hint {
+  margin: 6px 4px 0;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--lg-danger);
+}
+
+.lg-hint--note {
+  color: var(--lg-warn);
+}
+
+/* ---------- Nút hiện/ẩn mật khẩu ---------- */
+/* Selector có thêm .lg-page để thắng các rule "button { ... }" chung của dự án */
+
+.lg-page .lg-toggle {
+  position: absolute;
+  top: 29px;
+  right: 8px;
+  transform: translateY(-50%);
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  color: var(--lg-muted);
+  background: transparent;
+  border: 0;
+  border-radius: 10px;
+  cursor: pointer;
+  transition:
+    color 140ms ease,
+    background-color 140ms ease;
+}
+
+.lg-page .lg-toggle:hover {
+  color: var(--lg-ink);
+  background: rgba(255, 255, 255, 0.12);
+}
+
+/* ---------- Lỗi từ server ---------- */
+
+.lg-alert p {
+  margin: 0;
+  padding: 12px 14px;
+  font-size: 14px;
+  line-height: 1.45;
+  color: var(--lg-danger);
+  background: var(--lg-danger-bg);
+  border-radius: 12px;
+}
+
+/* ---------- Nút đăng nhập ---------- */
+
+.lg-page .lg-submit {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  height: 52px;
+  margin-top: 4px;
+  padding: 0 16px;
+  font: inherit;
+  font-size: 16px;
+  font-weight: 600;
+  color: #fff;
+  background: var(--lg-btn);
+  border: 0;
+  border-radius: 12px;
+  cursor: pointer;
+  transition:
+    background-color 160ms ease,
+    transform 120ms ease,
+    opacity 160ms ease;
+}
+
+.lg-page .lg-submit:hover:not(:disabled) {
+  background: var(--lg-btn-hover);
+}
+
+.lg-page .lg-submit:active:not(:disabled) {
+  transform: scale(0.985);
+}
+
+.lg-page .lg-submit:disabled {
+  opacity: 0.75;
+  cursor: progress;
+}
+
+.lg-spinner {
+  width: 18px;
+  height: 18px;
+  border: 2px solid rgba(255, 255, 255, 0.4);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: lg-spin 700ms linear infinite;
+}
+
+/* ---------- Focus bàn phím ---------- */
+
+.lg-page .lg-submit:focus-visible,
+.lg-page .lg-toggle:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--lg-accent) 60%, transparent);
+  outline-offset: 2px;
+}
+
+/* =========================================================
+   Responsive
+   ========================================================= */
+
+/* Tablet/điện thoại: ẩn cột chữ, form ở giữa, thiên hà vẫn làm nền */
+@media (max-width: 900px) {
+  .lg-page {
+    grid-template-columns: 1fr;
+  }
+
+  .lg-hero {
+    display: none;
+  }
+
+  .lg-shade {
+    background: rgba(0, 0, 0, 0.3);
+  }
+
+  .lg-main {
+    padding: 24px 16px;
+  }
+}
+
+@media (max-width: 480px) {
+  .lg-card {
+    padding: 32px 22px 26px;
+    border-radius: 20px;
+  }
+
+  .lg-header h1 {
+    font-size: 24px;
+  }
+}
+
+/* Màn hình thấp (laptop nhỏ, điện thoại nằm ngang) */
+@media (max-height: 640px) and (min-width: 901px) {
+  .lg-hero {
+    padding-block: 28px;
+  }
+
+  .lg-hero-note {
+    display: none;
+  }
+}
+
+/* =========================================================
+   Keyframes
+   ========================================================= */
+
+@keyframes lg-enter {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes lg-rise {
+  from {
+    opacity: 0;
+    transform: translateY(24px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes lg-word-in {
+  from {
+    opacity: 0;
+    transform: translateY(40%);
+    filter: blur(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+    filter: blur(0);
+  }
+}
+
+@keyframes lg-shake {
+  10%,
+  90% {
+    transform: translateX(-2px);
+  }
+  20%,
+  80% {
+    transform: translateX(4px);
+  }
+  30%,
+  50%,
+  70% {
+    transform: translateX(-7px);
+  }
+  40%,
+  60% {
+    transform: translateX(7px);
+  }
+}
+
+@keyframes lg-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Tôn trọng người dùng tắt chuyển động */
+@media (prefers-reduced-motion: reduce) {
+  .lg-hero-body,
+  .lg-word,
+  .lg-card,
+  .lg-card--shake {
+    animation: none;
+  }
+
+  .lg-field label,
+  .lg-field input,
+  .lg-page .lg-submit,
+  .lg-page .lg-toggle {
+    transition: none;
+  }
+
+  /* Spinner vẫn cần dấu hiệu đang tải */
+  .lg-spinner {
+    animation: none;
+    border-top-color: rgba(255, 255, 255, 0.4);
+    border-right-color: #fff;
+  }
+}

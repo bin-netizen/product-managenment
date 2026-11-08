@@ -57,9 +57,7 @@ function Dashboard() {
     <div className="page">
       <div className="page-heading">
         <div>
-          <span className="eyebrow">OVERVIEW</span>
-
-          <h1>Dashboard</h1>
+          <h1>Tổng quan</h1>
 
           <p>Theo dõi doanh thu, đơn hàng và tồn kho của bạn.</p>
         </div>

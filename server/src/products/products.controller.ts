@@ -1,10 +1,10 @@
+
 import {
   Body,
   Controller,
   Get,
   Post,
   Param,
-  ParseIntPipe,
   Patch,
   Delete,
   UseGuards,
@@ -21,36 +21,53 @@ export class ProductsController {
     private readonly productsService: ProductsService,
   ) {}
 
-  // GET /products: lấy danh sách sản phẩm
+  // Lấy danh sách sản phẩm
   @Get()
   findAll(): Promise<Product[]> {
     return this.productsService.findAll();
   }
 
-  // GET /products/1: lấy một sản phẩm
+  // Điều chỉnh tồn kho
+  @Post('stock-adjustments')
+  adjustStock(
+    @Body()
+    body: {
+      operationId: string;
+      action: 'deduct' | 'restore';
+      changes: {
+        productId: string;
+        colorId?: string;
+        delta: number;
+      }[];
+    },
+  ): Promise<{ success: boolean; duplicate: boolean }> {
+    return this.productsService.adjustStock(body);
+  }
+
+  // Tìm sản phẩm bằng clientId
   @Get(':id')
-  findOne(@Param('id', ParseIntPipe) id: number) {
+  findOne(@Param('id') id: string): Promise<Product> {
     return this.productsService.findOne(id);
   }
 
-  // POST /products: thêm sản phẩm
+  // Thêm sản phẩm
   @Post()
-  create(@Body() body: Partial<Product>) {
+  create(@Body() body: Partial<Product>): Promise<Product> {
     return this.productsService.create(body);
   }
 
-  // PATCH /products/1: cập nhật sản phẩm
+  // Cập nhật sản phẩm
   @Patch(':id')
   update(
-    @Param('id', ParseIntPipe) id: number,
+    @Param('id') id: string,
     @Body() body: Partial<Product>,
-  ) {
+  ): Promise<Product> {
     return this.productsService.update(id, body);
   }
 
-  // DELETE /products/1: xóa sản phẩm
+  // Xóa sản phẩm
   @Delete(':id')
-  remove(@Param('id', ParseIntPipe) id: number) {
+  remove(@Param('id') id: string): Promise<void> {
     return this.productsService.remove(id);
   }
 }

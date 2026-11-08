@@ -1,0 +1,151 @@
+/*
+  AppleShell.css — giao diện kiểu Apple cho thanh bên và thanh tiêu đề.
+
+  Cách hoạt động: mọi rule đều bắt đầu bằng ".app-layout" nên có độ ưu tiên
+  cao hơn rule gốc trong App.css, KHÔNG cần sửa App.css. File này chỉ đổi màu,
+  chữ, viền; không đụng tới vị trí/kích thước (position, width, display của
+  sidebar) nên các rule responsive và in ấn cũ trong App.css vẫn hoạt động.
+*/
+
+.app-layout {
+  --ap-ink: #1d1d1f;
+  --ap-muted: #6e6e73;
+  --ap-line: rgba(0, 0, 0, 0.08);
+  --ap-hover: rgba(0, 0, 0, 0.05);
+  --ap-active-bg: rgba(0, 113, 227, 0.1);
+  --ap-accent: #0071e3;
+
+  /* Font hệ thống: SF Pro trên máy Apple, Segoe UI trên Windows */
+  font-family:
+    -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Inter,
+    Roboto, "Helvetica Neue", Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* =========================
+   SIDEBAR
+========================= */
+
+.app-layout .sidebar {
+  background: rgba(255, 255, 255, 0.72);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  backdrop-filter: saturate(180%) blur(20px);
+  border-right: 1px solid var(--ap-line);
+}
+
+.app-layout .logo-icon {
+  background: var(--ap-ink);
+  border-radius: 11px;
+}
+
+.app-layout .logo h1 {
+  margin: 0;
+  color: var(--ap-ink);
+  font-size: 16px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+/* Bỏ kiểu chữ HOA giãn cách của bản cũ */
+.app-layout .logo span {
+  margin-top: 2px;
+  color: var(--ap-muted);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.app-layout .menu-title {
+  display: none;
+}
+
+.app-layout .nav-item {
+  padding: 10px 12px;
+  border-radius: 10px;
+  color: var(--ap-ink);
+  font-size: 14px;
+  font-weight: 500;
+  text-decoration: none;
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease;
+}
+
+.app-layout .nav-item:hover {
+  background: var(--ap-hover);
+  color: var(--ap-ink);
+}
+
+/* Mục đang chọn: nền xanh nhạt + chữ xanh, thay cho khối đen đặc */
+.app-layout .nav-item.active {
+  background: var(--ap-active-bg);
+  color: var(--ap-accent);
+  font-weight: 600;
+}
+
+.app-layout .nav-icon {
+  display: grid;
+  place-items: center;
+  color: var(--ap-muted);
+  transition: color 0.15s ease;
+}
+
+.app-layout .nav-item:hover .nav-icon {
+  color: var(--ap-ink);
+}
+
+.app-layout .nav-item.active .nav-icon {
+  color: var(--ap-accent);
+}
+
+.app-layout .nav-item:focus-visible {
+  outline: 3px solid rgba(0, 113, 227, 0.4);
+  outline-offset: 1px;
+}
+
+.app-layout .user-card {
+  border-color: var(--ap-line);
+  border-radius: 14px;
+  background: rgba(0, 0, 0, 0.03);
+}
+
+/* =========================
+   HEADER
+========================= */
+
+.app-layout .header {
+  background: rgba(255, 255, 255, 0.72);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  backdrop-filter: saturate(180%) blur(20px);
+  border-bottom: 1px solid var(--ap-line);
+}
+
+.app-layout .header h2 {
+  margin: 0;
+  color: var(--ap-ink);
+  font-size: 22px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+.app-layout .notification {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ap-muted);
+  cursor: pointer;
+  transition: color 0.15s ease;
+}
+
+.app-layout .notification:hover {
+  color: var(--ap-ink);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-layout .nav-item,
+  .app-layout .nav-icon,
+  .app-layout .notification {
+    transition: none;
+  }
+}

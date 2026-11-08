@@ -1,4 +1,3 @@
-
 import {
   createContext,
   useContext,
@@ -6,6 +5,8 @@ import {
   useEffect,
   type ReactNode,
 } from "react";
+
+const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:3000";
 
 interface User {
   id: number;
@@ -23,84 +24,137 @@ interface AuthContextType {
   logout: () => void;
 }
 
+interface AuthState {
+  user: User | null;
+  token: string | null;
+}
+
+function getInitialAuthState(): AuthState {
+  const savedToken = localStorage.getItem("access_token");
+  const savedUser = localStorage.getItem("user");
+
+  if (!savedToken || !savedUser) {
+    return { user: null, token: null };
+  }
+
+  try {
+    const user = JSON.parse(savedUser) as User;
+
+    if (
+      typeof user.id !== "number" ||
+      typeof user.name !== "string" ||
+      typeof user.email !== "string" ||
+      typeof user.role !== "string"
+    ) {
+      throw new Error("Thông tin người dùng không hợp lệ");
+    }
+
+    return {
+      user,
+      token: savedToken,
+    };
+  } catch {
+    localStorage.removeItem("access_token");
+    localStorage.removeItem("user");
+
+    return { user: null, token: null };
+  }
+}
+
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<User | null>(null);
-  const [token, setToken] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [auth, setAuth] = useState<AuthState>(getInitialAuthState);
 
-  // Khôi phục thông tin đăng nhập khi tải lại trang
-  useEffect(() => {
-    const savedToken = localStorage.getItem("access_token");
-    const savedUser = localStorage.getItem("user");
-
-    if (savedToken && savedUser) {
-      try {
-        setToken(savedToken);
-        setUser(JSON.parse(savedUser));
-      } catch {
-        localStorage.removeItem("access_token");
-        localStorage.removeItem("user");
-      }
-    }
-
-    setIsLoading(false);
-  }, []);
+  const { user, token } = auth;
 
   // Đăng nhập
-  async function login(email: string, password: string) {
-    const response = await fetch("http://localhost:3000/auth/login", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ email, password }),
-    });
+  async function login(email: string, password: string): Promise<void> {
+    let response: Response;
 
-    if (!response.ok) {
+    try {
+      response = await fetch(`${API_URL}/auth/login`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ email, password }),
+      });
+    } catch {
+      // fetch chỉ ném lỗi khi mất mạng / server không phản hồi
+      throw new Error("Không kết nối được máy chủ. Kiểm tra mạng rồi thử lại.");
+    }
+
+    if (response.status === 401) {
       throw new Error("Email hoặc mật khẩu không đúng");
     }
 
-    const data = await response.json();
+    if (response.status === 429) {
+      throw new Error("Bạn thử quá nhiều lần. Vui lòng đợi vài phút rồi thử lại.");
+    }
+
+    if (!response.ok) {
+      throw new Error("Máy chủ đang gặp lỗi. Vui lòng thử lại sau.");
+    }
+
+    let data: { access_token?: string; user?: User };
+
+    try {
+      data = await response.json();
+    } catch {
+      throw new Error("Dữ liệu đăng nhập không hợp lệ");
+    }
+
+    if (!data.access_token || !data.user) {
+      throw new Error("Dữ liệu đăng nhập không hợp lệ");
+    }
 
     localStorage.setItem("access_token", data.access_token);
     localStorage.setItem("user", JSON.stringify(data.user));
 
-    setToken(data.access_token);
-    setUser(data.user);
+    setAuth({
+      token: data.access_token,
+      user: data.user,
+    });
   }
 
   // Đăng xuất
-  function logout() {
+  function logout(): void {
     localStorage.removeItem("access_token");
     localStorage.removeItem("user");
 
-    setToken(null);
-    setUser(null);
-  }
-// Tự động đăng xuất khi API trả về 401
-useEffect(() => {
-  function handleUnauthorized() {
-    logout();
+    setAuth({
+      token: null,
+      user: null,
+    });
   }
 
-  window.addEventListener("auth:unauthorized", handleUnauthorized);
+  // Tự động đăng xuất khi API trả về 401
+  useEffect(() => {
+    function handleUnauthorized() {
+      localStorage.removeItem("access_token");
+      localStorage.removeItem("user");
 
-  return () => {
-    window.removeEventListener(
-      "auth:unauthorized",
-      handleUnauthorized,
-    );
-  };
-}, []);
+      setAuth({
+        token: null,
+        user: null,
+      });
+    }
+
+    window.addEventListener("auth:unauthorized", handleUnauthorized);
+
+    return () => {
+      window.removeEventListener("auth:unauthorized", handleUnauthorized);
+    };
+  }, []);
+
   return (
     <AuthContext.Provider
       value={{
         user,
         token,
         isAuthenticated: !!token,
-        isLoading,
+        isLoading: false,
         login,
         logout,
       }}
@@ -110,6 +164,7 @@ useEffect(() => {
   );
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function useAuth() {
   const context = useContext(AuthContext);
 

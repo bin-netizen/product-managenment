@@ -3,10 +3,11 @@ import type { Product } from "../types/product";
 
 const API_URL = "http://localhost:3000/products";
 
+type ApiProductData = Record<string, unknown>;
+
 // Kiểm tra phản hồi từ API
 async function checkResponse(response: Response): Promise<void> {
   if (response.status === 401) {
-    // Thông báo cho AuthContext biết phiên đăng nhập không hợp lệ
     window.dispatchEvent(new Event("auth:unauthorized"));
 
     throw new Error(
@@ -25,26 +26,94 @@ function getHeaders(): HeadersInit {
   };
 }
 
-// Chuyển dữ liệu từ MySQL/NestJS sang kiểu Product của React
-function normalizeProduct(data: any): Product {
+// Chuyển dữ liệu từ NestJS sang Product của React
+function normalizeProduct(value: unknown): Product {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    Array.isArray(value)
+  ) {
+    throw new Error("Dữ liệu sản phẩm không hợp lệ");
+  }
+
+  const data = value as ApiProductData;
+
+  const name =
+    typeof data.name === "string" ? data.name : "";
+
+  const category =
+    typeof data.category === "string"
+      ? data.category
+      : typeof data.productType === "string"
+        ? data.productType
+        : "";
+
+  // Ưu tiên UUID cũ, không dùng ID tự tăng của MySQL
+  const logicalId =
+    data.clientId ?? data.client_id ?? data.id;
+
+  if (!name || !category || logicalId == null) {
+    throw new Error(
+      "Sản phẩm thiếu tên, danh mục hoặc mã định danh",
+    );
+  }
+
   return {
-    ...data,
-    id: String(data.id),
-    price: Number(data.price),
+    ...(data as Partial<Product>),
+    id: String(logicalId),
+    name,
+    category,
+    price: Number(data.price ?? 0),
     quantity: Number(data.quantity ?? data.stock ?? 0),
-    productType: data.productType ?? undefined,
-    condition: data.condition ?? undefined,
+
+    productType: data.productType as Product["productType"],
+
+    sku:
+      typeof data.sku === "string" ? data.sku : undefined,
+
+    condition:
+      typeof data.condition === "string"
+        ? data.condition
+        : typeof data.condition_status === "string"
+          ? data.condition_status
+          : undefined,
+
     warrantyMonths:
-      data.warrantyMonths == null
+      data.warrantyMonths == null &&
+      data.warranty_months == null
         ? undefined
-        : Number(data.warrantyMonths),
-    image: data.image ?? "",
-    description: data.description ?? "",
-    colors: data.colors ?? [],
-    specs: data.specs ?? {},
-    features: data.features ?? [],
+        : Number(
+            data.warrantyMonths ?? data.warranty_months,
+          ),
+
+    image: typeof data.image === "string" ? data.image : "",
+
+    media: Array.isArray(data.media)
+      ? data.media as Product["media"]
+      : [],
+
+    description:
+      typeof data.description === "string"
+        ? data.description
+        : "",
+
+    colors: Array.isArray(data.colors)
+      ? data.colors as Product["colors"]
+      : [],
+
+    specs:
+      typeof data.specs === "object" &&
+      data.specs !== null &&
+      !Array.isArray(data.specs)
+        ? data.specs as Product["specs"]
+        : {},
+
+    features: Array.isArray(data.features)
+      ? data.features as Product["features"]
+      : [],
+
     createdAt: data.createdAt
-      ? new Date(data.createdAt).toISOString()
+      ? new Date(String(data.createdAt)).toISOString()
       : new Date().toISOString(),
   };
 }
@@ -61,7 +130,11 @@ export async function fetchProducts(): Promise<Product[]> {
     throw new Error("Không thể tải danh sách sản phẩm");
   }
 
-  const data = await response.json();
+  const data: unknown = await response.json();
+
+  if (!Array.isArray(data)) {
+    throw new Error("Dữ liệu danh sách sản phẩm không hợp lệ");
+  }
 
   return data.map(normalizeProduct);
 }

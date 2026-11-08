@@ -1,3 +1,4 @@
+
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 
@@ -40,6 +41,7 @@ export default function Orders() {
   const [cancelTarget, setCancelTarget] = useState<Order | null>(null);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
+  const [isUpdating, setIsUpdating] = useState(false);
 
   const [status, setStatus] = useState<StatusFilter>("all");
   const [period, setPeriod] = useState<PeriodFilter>("all");
@@ -50,12 +52,9 @@ export default function Orders() {
       all: orders.length,
       pending: orders.filter((o) => o.status === "pending").length,
       shipping: orders.filter((o) => o.status === "shipping").length,
-      installment: orders.filter((o) => o.status === "installment")
-        .length,
-      completed: orders.filter((o) => o.status === "completed")
-        .length,
-      cancelled: orders.filter((o) => o.status === "cancelled")
-        .length,
+      installment: orders.filter((o) => o.status === "installment").length,
+      completed: orders.filter((o) => o.status === "completed").length,
+      cancelled: orders.filter((o) => o.status === "cancelled").length,
     }),
     [orders],
   );
@@ -87,6 +86,7 @@ export default function Orders() {
         order.code.toLowerCase().includes(keyword) ||
         order.customerName.toLowerCase().includes(keyword) ||
         order.customerPhone.includes(keyword) ||
+        (order.customerCode ?? "").toLowerCase().includes(keyword) ||
         order.items.some((item) =>
           item.productName.toLowerCase().includes(keyword),
         )
@@ -120,38 +120,70 @@ export default function Orders() {
     URL.revokeObjectURL(url);
   };
 
-  const handleAdvance = (order: Order, next: OrderStatus) => {
-    const result = updateOrderStatus(order.id, next);
+  const handleAdvance = async (
+    order: Order,
+    next: OrderStatus,
+  ) => {
+    if (isUpdating) return;
 
-    if (result.ok) {
-      setError("");
-      setNotice(
-        `Đơn ${order.code} đã chuyển sang "${STATUS_LABEL[next]}".`,
+    setIsUpdating(true);
+    setNotice("");
+    setError("");
+
+    try {
+      const result = await updateOrderStatus(order.id, next);
+
+      if (result.ok) {
+        setNotice(
+          `Đơn ${order.code} đã chuyển sang "${STATUS_LABEL[next]}".`,
+        );
+      } else {
+        setError(result.error);
+      }
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Không thể cập nhật trạng thái đơn hàng.",
       );
-    } else {
-      setNotice("");
-      setError(result.error);
+    } finally {
+      setIsUpdating(false);
     }
   };
 
-  const handleCancelConfirm = (reason: string) => {
-    if (!cancelTarget) return;
+  const handleCancelConfirm = async (reason: string) => {
+    if (!cancelTarget || isUpdating) return;
 
-    const result = updateOrderStatus(cancelTarget.id, "cancelled", {
-      reason,
-    });
+    const order = cancelTarget;
 
-    if (result.ok) {
-      setError("");
-      setNotice(
-        `Đã hủy đơn ${cancelTarget.code} và hoàn hàng về kho.`,
+    setIsUpdating(true);
+    setNotice("");
+    setError("");
+
+    try {
+      const result = await updateOrderStatus(
+        order.id,
+        "cancelled",
+        { reason },
       );
-    } else {
-      setNotice("");
-      setError(result.error);
-    }
 
-    setCancelTarget(null);
+      if (result.ok) {
+        setNotice(
+          `Đã hủy đơn ${order.code} và hoàn hàng về kho.`,
+        );
+        setCancelTarget(null);
+      } else {
+        setError(result.error);
+      }
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Không thể hủy đơn hàng.",
+      );
+    } finally {
+      setIsUpdating(false);
+    }
   };
 
   const tabs: { value: StatusFilter; label: string }[] = [
@@ -167,8 +199,6 @@ export default function Orders() {
     <div className="page">
       <div className="page-heading">
         <div>
-          <span className="eyebrow">SALES</span>
-
           <h1>Đơn hàng</h1>
 
           <p>Theo dõi, xử lý và xuất báo cáo các đơn đã bán.</p>
@@ -227,7 +257,7 @@ export default function Orders() {
             <div className="orders-filters">
               <input
                 type="search"
-                placeholder="Tìm mã đơn, khách, SĐT, sản phẩm..."
+                placeholder="Tìm mã đơn, mã khách, tên, SĐT, sản phẩm..."
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
               />
@@ -320,6 +350,8 @@ export default function Orders() {
 
                           {order.customerPhone && (
                             <span className="cell-sub">
+                              {order.customerCode &&
+                                `${order.customerCode} · `}
                               {order.customerPhone}
                             </span>
                           )}
@@ -367,11 +399,12 @@ export default function Orders() {
                               <button
                                 type="button"
                                 className="secondary-button small"
-                                onClick={() =>
-                                  handleAdvance(order, next)
-                                }
+                                disabled={isUpdating}
+                                onClick={() => handleAdvance(order, next)}
                               >
-                                {STATUS_ACTION_LABEL[next]}
+                                {isUpdating
+                                  ? "Đang xử lý..."
+                                  : STATUS_ACTION_LABEL[next]}
                               </button>
                             )}
 
@@ -381,6 +414,7 @@ export default function Orders() {
                               <button
                                 type="button"
                                 className="danger-button small"
+                                disabled={isUpdating}
                                 onClick={() => setCancelTarget(order)}
                               >
                                 Hủy
@@ -402,7 +436,11 @@ export default function Orders() {
         <CancelOrderDialog
           order={cancelTarget}
           onConfirm={handleCancelConfirm}
-          onClose={() => setCancelTarget(null)}
+          onClose={() => {
+            if (!isUpdating) {
+              setCancelTarget(null);
+            }
+          }}
         />
       )}
     </div>

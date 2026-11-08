@@ -16,9 +16,6 @@ function Categories() {
     <div className="page">
       <div className="page-heading">
         <div>
-          <span className="eyebrow">
-            ORGANIZATION
-          </span>
 
           <h1>Categories</h1>
 

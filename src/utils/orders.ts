@@ -311,6 +311,7 @@ export function ordersToCsv(orders: Order[]): string {
   const header = [
     "Mã đơn",
     "Ngày tạo",
+    "Mã KH",
     "Khách hàng",
     "Số điện thoại",
     "Sản phẩm",
@@ -326,6 +327,7 @@ export function ordersToCsv(orders: Order[]): string {
   const rows = orders.map((order) => [
     order.code,
     formatDateTime(order.createdAt),
+    order.customerCode ?? "",
     order.customerName || "Khách lẻ",
     order.customerPhone,
     order.items

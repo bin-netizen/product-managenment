@@ -1,3 +1,4 @@
+
 import { useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router-dom";
 
@@ -8,6 +9,7 @@ import StatusBadge from "../components/StatusBadge";
 import { useOrders } from "../context/OrderContext";
 import { useProducts } from "../context/ProductContext";
 import type { OrderInfoInput, PaymentMethod } from "../types/order";
+import { canonicalPhone } from "../utils/customers";
 import { formatPrice } from "../utils/format";
 import {
   formatDateTime,
@@ -25,19 +27,21 @@ import {
 export default function OrderDetail() {
   const { id } = useParams();
 
-  // key={id}: chuyển sang đơn khác thì reset form và thông báo
   return <OrderDetailView key={id} id={id} />;
 }
 
 function OrderDetailView({ id }: { id?: string }) {
   const { getOrderById, updateOrderStatus, updateOrderInfo } =
     useOrders();
+
   const { getProductById } = useProducts();
 
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [showCancel, setShowCancel] = useState(false);
   const [editing, setEditing] = useState(false);
+  const [isUpdating, setIsUpdating] = useState(false);
+
   const [form, setForm] = useState<OrderInfoInput>({
     customerName: "",
     customerPhone: "",
@@ -69,46 +73,88 @@ function OrderDetailView({ id }: { id?: string }) {
 
   const isCancelled = order.status === "cancelled";
   const transitions = getAllowedTransitions(order);
+
   const forwardSteps = transitions.filter(
     (status) => status !== "cancelled",
   );
+
   const canCancel = transitions.includes("cancelled");
   const history = getOrderHistory(order);
   const flow = getStatusFlow(order);
   const flowIndex = flow.indexOf(order.status);
   const nextStatus = getNextStatus(order);
   const remaining = installmentRemaining(order);
+
   const completeBlocked =
     order.paymentMethod === "installment" &&
     order.status === "installment" &&
     remaining > 0;
 
-  const handleAdvance = (status: (typeof transitions)[number]) => {
-    const result = updateOrderStatus(order.id, status);
+  // Cập nhật trạng thái và chờ backend xử lý.
+  const handleAdvance = async (
+    status: (typeof transitions)[number],
+  ) => {
+    if (isUpdating) return;
 
-    if (result.ok) {
-      setError("");
-      setNotice(`Đã chuyển đơn sang "${STATUS_LABEL[status]}".`);
-    } else {
-      setNotice("");
-      setError(result.error);
+    setIsUpdating(true);
+    setError("");
+    setNotice("");
+
+    try {
+      const result = await updateOrderStatus(order.id, status);
+
+      if (result.ok) {
+        setNotice(
+          `Đã chuyển đơn sang "${STATUS_LABEL[status]}".`,
+        );
+      } else {
+        setError(result.error);
+      }
+    } catch (error) {
+      console.error("Lỗi cập nhật trạng thái đơn hàng:", error);
+
+      setError(
+        error instanceof Error
+          ? error.message
+          : "Không thể cập nhật trạng thái đơn hàng.",
+      );
+    } finally {
+      setIsUpdating(false);
     }
   };
 
-  const handleCancelConfirm = (reason: string) => {
-    const result = updateOrderStatus(order.id, "cancelled", {
-      reason,
-    });
+  // Hủy đơn và chờ backend hoàn hàng về kho.
+  const handleCancelConfirm = async (reason: string) => {
+    if (isUpdating) return;
 
-    setShowCancel(false);
+    setIsUpdating(true);
+    setError("");
+    setNotice("");
 
-    if (result.ok) {
-      setError("");
-      setEditing(false);
-      setNotice("Đã hủy đơn và hoàn hàng về kho.");
-    } else {
-      setNotice("");
-      setError(result.error);
+    try {
+      const result = await updateOrderStatus(
+        order.id,
+        "cancelled",
+        { reason },
+      );
+
+      if (result.ok) {
+        setShowCancel(false);
+        setEditing(false);
+        setNotice("Đã hủy đơn và hoàn hàng về kho.");
+      } else {
+        setError(result.error);
+      }
+    } catch (error) {
+      console.error("Lỗi hủy đơn hàng:", error);
+
+      setError(
+        error instanceof Error
+          ? error.message
+          : "Không thể hủy đơn hàng. Vui lòng thử lại.",
+      );
+    } finally {
+      setIsUpdating(false);
     }
   };
 
@@ -119,6 +165,7 @@ function OrderDetailView({ id }: { id?: string }) {
       note: order.note,
       paymentMethod: order.paymentMethod,
     });
+
     setError("");
     setNotice("");
     setEditing(true);
@@ -230,10 +277,15 @@ function OrderDetailView({ id }: { id?: string }) {
                       ? "primary-button"
                       : "secondary-button"
                   }
-                  disabled={status === "completed" && completeBlocked}
+                  disabled={
+                    isUpdating ||
+                    (status === "completed" && completeBlocked)
+                  }
                   onClick={() => handleAdvance(status)}
                 >
-                  {STATUS_ACTION_LABEL[status]}
+                  {isUpdating
+                    ? "Đang xử lý..."
+                    : STATUS_ACTION_LABEL[status]}
                 </button>
               ))}
 
@@ -241,7 +293,7 @@ function OrderDetailView({ id }: { id?: string }) {
                 type="button"
                 className="secondary-button"
                 onClick={startEdit}
-                disabled={editing}
+                disabled={editing || isUpdating}
               >
                 ✏️ Sửa thông tin
               </button>
@@ -251,6 +303,7 @@ function OrderDetailView({ id }: { id?: string }) {
                   type="button"
                   className="danger-button"
                   onClick={() => setShowCancel(true)}
+                  disabled={isUpdating}
                 >
                   Hủy đơn
                 </button>
@@ -341,10 +394,10 @@ function OrderDetailView({ id }: { id?: string }) {
                       : value !== "installment",
                   )
                   .map(([value, label]) => (
-                  <option key={value} value={value}>
-                    {label}
-                  </option>
-                ))}
+                    <option key={value} value={value}>
+                      {label}
+                    </option>
+                  ))}
               </select>
             </div>
 
@@ -401,7 +454,21 @@ function OrderDetailView({ id }: { id?: string }) {
         <div className="invoice-meta">
           <div>
             <span>Khách hàng</span>
-            <strong>{order.customerName || "Khách lẻ"}</strong>
+
+            {order.customerPhone ? (
+              <Link
+                to={`/customers/${order.customerCode || canonicalPhone(order.customerPhone)}`}
+                className="order-product-link"
+              >
+                <strong>{order.customerName || "Khách lẻ"}</strong>
+              </Link>
+            ) : (
+              <strong>{order.customerName || "Khách lẻ"}</strong>
+            )}
+
+            {order.customerCode && (
+              <span className="customer-code">{order.customerCode}</span>
+            )}
           </div>
 
           <div>
@@ -422,6 +489,7 @@ function OrderDetailView({ id }: { id?: string }) {
                   ? "Hoàn thành lúc"
                   : "Hoàn thành"}
             </span>
+
             <strong>
               {isCancelled && order.cancelledAt
                 ? formatDateTime(order.cancelledAt)
@@ -533,7 +601,9 @@ function OrderDetailView({ id }: { id?: string }) {
             {order.installment && (
               <>
                 <div>
-                  <span>Đã thu ({order.installment.months} tháng)</span>
+                  <span>
+                    Đã thu ({order.installment.months} tháng)
+                  </span>
                   <strong>{formatPrice(installmentPaid(order))}</strong>
                 </div>
 
@@ -590,7 +660,11 @@ function OrderDetailView({ id }: { id?: string }) {
         <CancelOrderDialog
           order={order}
           onConfirm={handleCancelConfirm}
-          onClose={() => setShowCancel(false)}
+          onClose={() => {
+            if (!isUpdating) {
+              setShowCancel(false);
+            }
+          }}
         />
       )}
     </div>

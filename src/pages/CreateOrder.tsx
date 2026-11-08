@@ -1,3 +1,4 @@
+
 import { useMemo, useRef, useState, type FormEvent } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 
@@ -10,6 +11,7 @@ import {
   formatPrice,
   parsePrice,
 } from "../utils/format";
+import { buildCustomers, canonicalPhone } from "../utils/customers";
 import {
   calcMonthlyPayment,
   INSTALLMENT_MONTH_OPTIONS,
@@ -40,9 +42,9 @@ export default function CreateOrder() {
   const location = useLocation();
 
   const { products } = useProducts();
-  const { createOrder } = useOrders();
+  const { orders, createOrder } = useOrders();
 
-  // Chặn bấm "Tạo đơn" 2 lần liên tiếp (tránh trừ kho 2 lần)
+  // Chặn bấm tạo đơn nhiều lần liên tiếp.
   const submittedRef = useRef(false);
 
   const [cart, setCart] = useState<CartLine[]>(() => {
@@ -57,8 +59,8 @@ export default function CreateOrder() {
     }
 
     const colorId =
-      product.colors?.find((color) => color.id === state?.colorId)
-        ?.id ?? product.colors?.[0]?.id;
+      product.colors?.find((color) => color.id === state?.colorId)?.id ??
+      product.colors?.[0]?.id;
 
     if (availableStock(product, colorId) < 1) {
       return [];
@@ -76,22 +78,38 @@ export default function CreateOrder() {
 
   const [search, setSearch] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("");
-  const [colorPick, setColorPick] = useState<
-    Record<string, string>
-  >({});
+  const [colorPick, setColorPick] = useState<Record<string, string>>({});
 
   const [customerName, setCustomerName] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
+
+  // Nhận diện khách cũ bằng số điện thoại.
+  const phoneKey = canonicalPhone(customerPhone);
+  const phoneComplete = /^0\d{9}$/.test(phoneKey);
+
+  const existingCustomer = useMemo(
+    () =>
+      phoneComplete
+        ? buildCustomers(orders).customers.find(
+            (customer) => customer.key === phoneKey,
+          )
+        : undefined,
+    [orders, phoneComplete, phoneKey],
+  );
+
   const [note, setNote] = useState("");
   const [paymentMethod, setPaymentMethod] =
     useState<PaymentMethod>("cash");
+
   const [status, setStatus] = useState<"completed" | "pending">(
     "completed",
   );
+
   const [discountInput, setDiscountInput] = useState("");
   const [installmentMonths, setInstallmentMonths] = useState("12");
   const [downPaymentInput, setDownPaymentInput] = useState("");
   const [error, setError] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const categories = useMemo(
     () =>
@@ -122,7 +140,7 @@ export default function CreateOrder() {
     });
   }, [products, search, categoryFilter]);
 
-  // Gắn thông tin sản phẩm vào từng dòng giỏ hàng; bỏ qua sản phẩm đã bị xóa
+  // Gắn thông tin sản phẩm vào từng dòng giỏ hàng.
   const lines = useMemo(
     () =>
       cart.flatMap((line) => {
@@ -150,13 +168,16 @@ export default function CreateOrder() {
     [cart, products],
   );
 
-  // Số lượng đã bỏ vào giỏ theo từng "kho" (kho riêng của màu, hoặc kho chung của sản phẩm cũ)
+  // Tổng số lượng đã chọn theo từng kho.
   const usedByPool = new Map<string, number>();
 
   lines.forEach((line) => {
     const pool = stockPoolKey(line.product, line.colorId);
 
-    usedByPool.set(pool, (usedByPool.get(pool) ?? 0) + line.quantity);
+    usedByPool.set(
+      pool,
+      (usedByPool.get(pool) ?? 0) + line.quantity,
+    );
   });
 
   const subtotal = lines.reduce(
@@ -169,11 +190,13 @@ export default function CreateOrder() {
 
   const isInstallment = paymentMethod === "installment";
   const downPayment = parsePrice(downPaymentInput);
+
   const monthlyPayment = calcMonthlyPayment(
     total,
     downPayment,
     Number(installmentMonths),
   );
+
   const itemCount = lines.reduce(
     (sum, line) => sum + line.quantity,
     0,
@@ -245,8 +268,11 @@ export default function CreateOrder() {
 
         const max = Math.max(
           1,
-          (product ? availableStock(product, line.colorId) : 1) - others,
+          (product
+            ? availableStock(product, line.colorId)
+            : 1) - others,
         );
+
         const value = Math.floor(next) || 1;
 
         return {
@@ -263,7 +289,8 @@ export default function CreateOrder() {
     );
   };
 
-  const handleSubmit = (event: FormEvent) => {
+  // Tạo đơn và chờ backend cập nhật tồn kho.
+  const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();
 
     if (submittedRef.current) {
@@ -292,44 +319,61 @@ export default function CreateOrder() {
     }
 
     submittedRef.current = true;
+    setIsSubmitting(true);
+    setError("");
 
-    const result = createOrder({
-      customerName,
-      customerPhone: phone,
-      note,
-      paymentMethod,
-      // Đơn trả góp ở trạng thái "Đang trả góp" cho đến khi khách trả đủ
-      status: isInstallment ? "installment" : status,
-      installment: isInstallment
-        ? { months: Number(installmentMonths), downPayment }
-        : undefined,
-      discount,
-      items: lines.map((line) => ({
-        productId: line.productId,
-        productName: line.product.name,
-        colorId: line.color?.id,
-        colorName: line.color?.name,
-        unitPrice: line.unitPrice,
-        quantity: line.quantity,
-      })),
-    });
+    try {
+      const result = await createOrder({
+        customerName,
+        customerPhone: phone,
+        note,
+        paymentMethod,
+        status: isInstallment ? "installment" : status,
+        installment: isInstallment
+          ? {
+              months: Number(installmentMonths),
+              downPayment,
+            }
+          : undefined,
+        discount,
+        items: lines.map((line) => ({
+          productId: line.productId,
+          productName: line.product.name,
+          colorId: line.color?.id,
+          colorName: line.color?.name,
+          unitPrice: line.unitPrice,
+          quantity: line.quantity,
+        })),
+      });
 
-    if (!result.ok) {
+      if (!result.ok) {
+        setError(result.error);
+        submittedRef.current = false;
+        setIsSubmitting(false);
+        return;
+      }
+
+      navigate(`/orders/${result.order.id}`);
+    } catch (error) {
+      console.error("Lỗi tạo đơn hàng:", error);
+
+      setError(
+        error instanceof Error
+          ? error.message
+          : "Không thể tạo đơn hàng. Vui lòng thử lại.",
+      );
+
       submittedRef.current = false;
-      setError(result.error);
-      return;
+      setIsSubmitting(false);
     }
-
-    navigate(`/orders/${result.order.id}`);
   };
 
   return (
     <div className="page">
       <div className="page-heading">
         <div>
-          <span className="eyebrow">POINT OF SALE</span>
 
-          <h1>Tạo đơn bán hàng</h1>
+          <h1>Tạo đơn</h1>
 
           <p>
             Chọn sản phẩm, nhập thông tin khách hàng và chốt đơn.
@@ -380,6 +424,7 @@ export default function CreateOrder() {
               <div className="empty-icon">📦</div>
               <h3>Chưa có sản phẩm để bán</h3>
               <p>Hãy thêm sản phẩm vào kho trước.</p>
+
               <Link
                 to="/products/add"
                 className="primary-button"
@@ -411,7 +456,9 @@ export default function CreateOrder() {
 
                 const remaining =
                   stock -
-                  (usedByPool.get(stockPoolKey(product, colorId)) ?? 0);
+                  (usedByPool.get(
+                    stockPoolKey(product, colorId),
+                  ) ?? 0);
 
                 return (
                   <li className="sale-product" key={product.id}>
@@ -473,7 +520,7 @@ export default function CreateOrder() {
                       <button
                         type="button"
                         className="primary-button small"
-                        disabled={remaining <= 0}
+                        disabled={remaining <= 0 || isSubmitting}
                         onClick={() =>
                           addToCart(product.id, colorId)
                         }
@@ -502,8 +549,7 @@ export default function CreateOrder() {
 
             {lines.length === 0 ? (
               <p className="sale-empty">
-                Chưa có sản phẩm. Bấm "+ Thêm" ở danh sách bên
-                trái.
+                Chưa có sản phẩm. Bấm "+ Thêm" ở danh sách bên trái.
               </p>
             ) : (
               <ul className="cart-list">
@@ -532,7 +578,7 @@ export default function CreateOrder() {
                         <button
                           type="button"
                           aria-label="Giảm số lượng"
-                          disabled={line.quantity <= 1}
+                          disabled={line.quantity <= 1 || isSubmitting}
                           onClick={() =>
                             changeQuantity(
                               line.key,
@@ -547,6 +593,7 @@ export default function CreateOrder() {
                           type="number"
                           min={1}
                           max={max}
+                          disabled={isSubmitting}
                           value={line.quantity}
                           onChange={(event) =>
                             changeQuantity(
@@ -559,7 +606,9 @@ export default function CreateOrder() {
                         <button
                           type="button"
                           aria-label="Tăng số lượng"
-                          disabled={line.quantity >= max}
+                          disabled={
+                            line.quantity >= max || isSubmitting
+                          }
                           onClick={() =>
                             changeQuantity(
                               line.key,
@@ -581,6 +630,7 @@ export default function CreateOrder() {
                         type="button"
                         className="cart-remove"
                         aria-label="Xóa khỏi đơn"
+                        disabled={isSubmitting}
                         onClick={() => removeLine(line.key)}
                       >
                         ×
@@ -602,9 +652,11 @@ export default function CreateOrder() {
                 <label htmlFor="customerName">
                   Tên khách hàng
                 </label>
+
                 <input
                   id="customerName"
                   placeholder="Để trống = Khách lẻ"
+                  disabled={isSubmitting}
                   value={customerName}
                   onChange={(event) =>
                     setCustomerName(event.target.value)
@@ -616,15 +668,49 @@ export default function CreateOrder() {
                 <label htmlFor="customerPhone">
                   Số điện thoại
                 </label>
+
                 <input
                   id="customerPhone"
                   inputMode="tel"
                   placeholder="0901234567"
+                  disabled={isSubmitting}
                   value={customerPhone}
                   onChange={(event) =>
                     setCustomerPhone(event.target.value)
                   }
                 />
+
+                {existingCustomer ? (
+                  <small className="customer-hint">
+                    Khách cũ{" "}
+                    <strong>{existingCustomer.code}</strong> ·{" "}
+                    {existingCustomer.name} ·{" "}
+                    {existingCustomer.orderCount} đơn
+                    {existingCustomer.outstanding > 0 &&
+                      ` · còn nợ ${formatPrice(existingCustomer.outstanding)}`}
+                    {!customerName.trim() && (
+                      <>
+                        {" "}
+                        <button
+                          type="button"
+                          className="link-button"
+                          disabled={isSubmitting}
+                          onClick={() =>
+                            setCustomerName(existingCustomer.name)
+                          }
+                        >
+                          Dùng tên này
+                        </button>
+                      </>
+                    )}
+                  </small>
+                ) : (
+                  phoneComplete && (
+                    <small className="customer-hint">
+                      Khách mới, sẽ được cấp mã khi tạo đơn.
+                    </small>
+                  )
+                )}
               </div>
 
               <div className="sale-form-row">
@@ -632,8 +718,10 @@ export default function CreateOrder() {
                   <label htmlFor="paymentMethod">
                     Thanh toán
                   </label>
+
                   <select
                     id="paymentMethod"
+                    disabled={isSubmitting}
                     value={paymentMethod}
                     onChange={(event) =>
                       setPaymentMethod(
@@ -654,36 +742,40 @@ export default function CreateOrder() {
                 </div>
 
                 {!isInstallment && (
-                <div className="form-group">
-                  <label htmlFor="status">Trạng thái</label>
-                  <select
-                    id="status"
-                    value={status}
-                    onChange={(event) =>
-                      setStatus(
-                        event.target.value as
-                          | "completed"
-                          | "pending",
-                      )
-                    }
-                  >
-                    <option value="completed">
-                      Hoàn thành ngay
-                    </option>
-                    <option value="pending">
-                      Chờ xử lý (giao sau)
-                    </option>
-                  </select>
-                </div>
+                  <div className="form-group">
+                    <label htmlFor="status">Trạng thái</label>
+
+                    <select
+                      id="status"
+                      disabled={isSubmitting}
+                      value={status}
+                      onChange={(event) =>
+                        setStatus(
+                          event.target.value as
+                            | "completed"
+                            | "pending",
+                        )
+                      }
+                    >
+                      <option value="completed">
+                        Hoàn thành ngay
+                      </option>
+                      <option value="pending">
+                        Chờ xử lý (giao sau)
+                      </option>
+                    </select>
+                  </div>
                 )}
               </div>
 
               <div className="form-group">
                 <label htmlFor="discount">Giảm giá (đ)</label>
+
                 <input
                   id="discount"
                   inputMode="numeric"
                   placeholder="0"
+                  disabled={isSubmitting}
                   value={discountInput}
                   onChange={(event) =>
                     setDiscountInput(
@@ -703,6 +795,7 @@ export default function CreateOrder() {
 
                       <select
                         id="installmentMonths"
+                        disabled={isSubmitting}
                         value={installmentMonths}
                         onChange={(event) =>
                           setInstallmentMonths(event.target.value)
@@ -725,6 +818,7 @@ export default function CreateOrder() {
                         id="downPayment"
                         inputMode="numeric"
                         placeholder="0"
+                        disabled={isSubmitting}
                         value={downPaymentInput}
                         onChange={(event) =>
                           setDownPaymentInput(
@@ -739,7 +833,9 @@ export default function CreateOrder() {
                     <div>
                       <span>Còn lại sau trả trước</span>
                       <strong>
-                        {formatPrice(Math.max(0, total - downPayment))}
+                        {formatPrice(
+                          Math.max(0, total - downPayment),
+                        )}
                       </strong>
                     </div>
 
@@ -750,17 +846,20 @@ export default function CreateOrder() {
                   </div>
 
                   <small>
-                    Không tính lãi. Đơn ở trạng thái "Đang trả góp" cho
-                    đến khi bạn ghi nhận khách trả đủ và bấm Hoàn thành.
+                    Không tính lãi. Đơn ở trạng thái "Đang trả góp"
+                    cho đến khi bạn ghi nhận khách trả đủ và bấm
+                    Hoàn thành.
                   </small>
                 </div>
               )}
 
               <div className="form-group">
                 <label htmlFor="note">Ghi chú</label>
+
                 <textarea
                   id="note"
                   rows={2}
+                  disabled={isSubmitting}
                   value={note}
                   onChange={(event) => setNote(event.target.value)}
                 />
@@ -794,9 +893,9 @@ export default function CreateOrder() {
               <button
                 type="submit"
                 className="primary-button block"
-                disabled={lines.length === 0}
+                disabled={lines.length === 0 || isSubmitting}
               >
-                Tạo đơn hàng
+                {isSubmitting ? "Đang tạo đơn..." : "Tạo đơn hàng"}
               </button>
             </div>
           </section>

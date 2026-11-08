@@ -64,7 +64,6 @@ function Products() {
     <div className="page">
       <div className="page-heading">
         <div>
-          <span className="eyebrow">PRODUCT CATALOG</span>
 
           <h1>Products</h1>
 
