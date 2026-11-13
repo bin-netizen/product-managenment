@@ -10,6 +10,14 @@ export interface ProductColor {
   quantity?: number;
 }
 
+// Một ảnh hoặc video trong thư viện của sản phẩm.
+// Ảnh: data URL đã nén. Video: link YouTube hoặc link file .mp4 / .webm.
+export interface ProductMedia {
+  id: string;
+  type: "image" | "video";
+  url: string;
+}
+
 export interface Product {
   id: string;
   name: string;
@@ -29,6 +37,9 @@ export interface Product {
   quantity: number;
   image: string;
 
+  // Thư viện ảnh/video để người dùng xem ở trang chi tiết (optional cho sản phẩm cũ).
+  media?: ProductMedia[];
+
   description: string;
 
   colors: ProductColor[];
@@ -39,6 +50,7 @@ export interface Product {
 }
 
 // Dữ liệu form gửi lên khi thêm/sửa (giống tham số của addProduct)
+// Tự có `media` vì được suy ra từ Product.
 export type ProductInput = Omit<Product, "id" | "createdAt">;
 
 export interface ProductFormData {

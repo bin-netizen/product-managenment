@@ -1,5 +1,6 @@
 import type {
   Order,
+  OrderHistoryEntry,
   OrderItem,
   OrderStatus,
   PaymentMethod,
@@ -7,6 +8,8 @@ import type {
 
 export const STATUS_LABEL: Record<OrderStatus, string> = {
   pending: "Chờ xử lý",
+  shipping: "Đang giao",
+  installment: "Đang trả góp",
   completed: "Hoàn thành",
   cancelled: "Đã hủy",
 };
@@ -15,15 +18,142 @@ export const PAYMENT_LABEL: Record<PaymentMethod, string> = {
   cash: "Tiền mặt",
   transfer: "Chuyển khoản",
   cod: "Thu hộ (COD)",
+  installment: "Trả góp",
 };
 
 // Trạng thái nào được chuyển sang trạng thái nào.
 // "Đã hủy" là trạng thái cuối: kho đã được hoàn lại nên không cho mở lại.
 export const STATUS_TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
-  pending: ["completed", "cancelled"],
+  pending: ["shipping", "installment", "completed", "cancelled"],
+  shipping: ["installment", "completed", "cancelled"],
+  installment: ["completed", "cancelled"],
   completed: ["cancelled"],
   cancelled: [],
 };
+
+export const STATUS_ACTION_LABEL: Partial<Record<OrderStatus, string>> = {
+  shipping: "🚚 Giao hàng",
+  installment: "💳 Bắt đầu trả góp",
+  completed: "✓ Hoàn thành đơn",
+};
+
+export const OTHER_CANCEL_REASON = "Khác";
+
+export const CANCEL_REASONS = [
+  "Khách đổi ý, không muốn mua nữa",
+  "Khách không nghe máy / không nhận hàng",
+  "Hết hàng hoặc sản phẩm bị lỗi",
+  "Nhập nhầm hoặc trùng đơn",
+  OTHER_CANCEL_REASON,
+];
+
+export const INSTALLMENT_MONTH_OPTIONS = [3, 6, 9, 12, 18, 24];
+
+export function installmentPaid(order: Order): number {
+  return (order.installment?.payments ?? []).reduce(
+    (sum, payment) => sum + payment.amount,
+    0,
+  );
+}
+
+// Số tiền khách còn phải trả của đơn trả góp (đơn thường luôn là 0)
+export function installmentRemaining(order: Order): number {
+  return order.installment
+    ? Math.max(0, order.total - installmentPaid(order))
+    : 0;
+}
+
+// Tiền còn phải thu của các đơn trả góp đang xử lý (đơn đã xong hoặc đã hủy thì không còn thu)
+export function installmentOutstanding(order: Order): number {
+  return order.paymentMethod === "installment" &&
+    order.status !== "completed" &&
+    order.status !== "cancelled"
+    ? installmentRemaining(order)
+    : 0;
+}
+
+// Tiền góp dự kiến mỗi tháng (làm tròn lên, không tính lãi)
+export function calcMonthlyPayment(
+  total: number,
+  downPayment: number,
+  months: number,
+): number {
+  return months > 0
+    ? Math.ceil(Math.max(0, total - downPayment) / months)
+    : 0;
+}
+
+// Các trạng thái đơn này được phép chuyển tới.
+// Đơn trả góp phải qua "Đang trả góp" mới hoàn thành được; đơn thường thì không có bước này.
+export function getAllowedTransitions(order: Order): OrderStatus[] {
+  return STATUS_TRANSITIONS[order.status].filter((status) => {
+    if (order.paymentMethod === "installment") {
+      return !(status === "completed" && order.status !== "installment");
+    }
+
+    return status !== "installment";
+  });
+}
+
+// Các bước hiển thị trên thanh tiến trình
+export function getStatusFlow(order: Order): OrderStatus[] {
+  return order.paymentMethod === "installment"
+    ? ["pending", "shipping", "installment", "completed"]
+    : ["pending", "shipping", "completed"];
+}
+
+// Bước tiếp theo cho nút thao tác nhanh. Đơn trả góp chỉ hoàn thành được khi khách đã trả đủ.
+export function getNextStatus(order: Order): OrderStatus | undefined {
+  if (order.paymentMethod === "installment") {
+    if (order.status === "installment") {
+      return installmentRemaining(order) <= 0 ? "completed" : undefined;
+    }
+
+    return order.status === "pending" || order.status === "shipping"
+      ? "installment"
+      : undefined;
+  }
+
+  if (order.status === "pending") return "shipping";
+  if (order.status === "shipping") return "completed";
+
+  return undefined;
+}
+
+export const PHONE_PATTERN = /^(0|\+84)\d{9}$/;
+
+export function normalizePhone(value: string): string {
+  return value.replace(/[\s.]/g, "");
+}
+
+// Đơn cũ chưa có `history` thì dựng lại từ các mốc thời gian đã lưu
+export function getOrderHistory(order: Order): OrderHistoryEntry[] {
+  if (order.history && order.history.length > 0) {
+    return order.history;
+  }
+
+  const entries: OrderHistoryEntry[] = [
+    {
+      status:
+        order.completedAt === order.createdAt ? "completed" : "pending",
+      at: order.createdAt,
+    },
+  ];
+
+  if (order.completedAt && order.completedAt !== order.createdAt) {
+    entries.push({ status: "completed", at: order.completedAt });
+  }
+
+  if (order.cancelledAt) {
+    entries.push({
+      status: "cancelled",
+      at: order.cancelledAt,
+      note: order.cancelReason,
+    });
+  }
+
+  return entries;
+}
 
 export function calcSubtotal(items: OrderItem[]): number {
   return items.reduce(
@@ -122,8 +252,6 @@ export interface SalesStat {
   revenue: number;
 }
 
-// Doanh số theo sản phẩm (chỉ tính đơn hoàn thành).
-// Doanh thu từng dòng được tính trước giảm giá của cả đơn.
 export function salesByProduct(
   orders: Order[],
 ): Map<string, SalesStat> {
@@ -183,6 +311,7 @@ export function ordersToCsv(orders: Order[]): string {
   const header = [
     "Mã đơn",
     "Ngày tạo",
+    "Mã KH",
     "Khách hàng",
     "Số điện thoại",
     "Sản phẩm",
@@ -191,11 +320,14 @@ export function ordersToCsv(orders: Order[]): string {
     "Tổng tiền",
     "Thanh toán",
     "Trạng thái",
+    "Lý do hủy",
+    "Còn phải thu",
   ];
 
   const rows = orders.map((order) => [
     order.code,
     formatDateTime(order.createdAt),
+    order.customerCode ?? "",
     order.customerName || "Khách lẻ",
     order.customerPhone,
     order.items
@@ -211,6 +343,8 @@ export function ordersToCsv(orders: Order[]): string {
     order.total,
     PAYMENT_LABEL[order.paymentMethod],
     STATUS_LABEL[order.status],
+    order.cancelReason ?? "",
+    installmentOutstanding(order),
   ]);
 
   return (

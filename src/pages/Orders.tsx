@@ -1,14 +1,21 @@
+
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 
+import CancelOrderDialog from "../components/CancelOrderDialog";
 import StatusBadge from "../components/StatusBadge";
 import { useOrders } from "../context/OrderContext";
-import type { OrderStatus } from "../types/order";
+import type { Order, OrderStatus } from "../types/order";
 import { formatPrice } from "../utils/format";
 import {
   formatDateTime,
+  getAllowedTransitions,
+  getNextStatus,
+  installmentOutstanding,
+  installmentPaid,
   ordersToCsv,
   PAYMENT_LABEL,
+  STATUS_ACTION_LABEL,
   STATUS_LABEL,
   totalRevenue,
 } from "../utils/orders";
@@ -29,7 +36,12 @@ function startOfToday(): number {
 }
 
 export default function Orders() {
-  const { orders } = useOrders();
+  const { orders, updateOrderStatus } = useOrders();
+
+  const [cancelTarget, setCancelTarget] = useState<Order | null>(null);
+  const [notice, setNotice] = useState("");
+  const [error, setError] = useState("");
+  const [isUpdating, setIsUpdating] = useState(false);
 
   const [status, setStatus] = useState<StatusFilter>("all");
   const [period, setPeriod] = useState<PeriodFilter>("all");
@@ -39,10 +51,10 @@ export default function Orders() {
     () => ({
       all: orders.length,
       pending: orders.filter((o) => o.status === "pending").length,
-      completed: orders.filter((o) => o.status === "completed")
-        .length,
-      cancelled: orders.filter((o) => o.status === "cancelled")
-        .length,
+      shipping: orders.filter((o) => o.status === "shipping").length,
+      installment: orders.filter((o) => o.status === "installment").length,
+      completed: orders.filter((o) => o.status === "completed").length,
+      cancelled: orders.filter((o) => o.status === "cancelled").length,
     }),
     [orders],
   );
@@ -74,12 +86,22 @@ export default function Orders() {
         order.code.toLowerCase().includes(keyword) ||
         order.customerName.toLowerCase().includes(keyword) ||
         order.customerPhone.includes(keyword) ||
+        (order.customerCode ?? "").toLowerCase().includes(keyword) ||
         order.items.some((item) =>
           item.productName.toLowerCase().includes(keyword),
         )
       );
     });
   }, [orders, status, period, search]);
+
+  const outstanding = useMemo(
+    () =>
+      filtered.reduce(
+        (sum, order) => sum + installmentOutstanding(order),
+        0,
+      ),
+    [filtered],
+  );
 
   const handleExport = () => {
     const blob = new Blob([ordersToCsv(filtered)], {
@@ -98,9 +120,77 @@ export default function Orders() {
     URL.revokeObjectURL(url);
   };
 
+  const handleAdvance = async (
+    order: Order,
+    next: OrderStatus,
+  ) => {
+    if (isUpdating) return;
+
+    setIsUpdating(true);
+    setNotice("");
+    setError("");
+
+    try {
+      const result = await updateOrderStatus(order.id, next);
+
+      if (result.ok) {
+        setNotice(
+          `Đơn ${order.code} đã chuyển sang "${STATUS_LABEL[next]}".`,
+        );
+      } else {
+        setError(result.error);
+      }
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Không thể cập nhật trạng thái đơn hàng.",
+      );
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
+  const handleCancelConfirm = async (reason: string) => {
+    if (!cancelTarget || isUpdating) return;
+
+    const order = cancelTarget;
+
+    setIsUpdating(true);
+    setNotice("");
+    setError("");
+
+    try {
+      const result = await updateOrderStatus(
+        order.id,
+        "cancelled",
+        { reason },
+      );
+
+      if (result.ok) {
+        setNotice(
+          `Đã hủy đơn ${order.code} và hoàn hàng về kho.`,
+        );
+        setCancelTarget(null);
+      } else {
+        setError(result.error);
+      }
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Không thể hủy đơn hàng.",
+      );
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
   const tabs: { value: StatusFilter; label: string }[] = [
     { value: "all", label: "Tất cả" },
     { value: "pending", label: STATUS_LABEL.pending },
+    { value: "shipping", label: STATUS_LABEL.shipping },
+    { value: "installment", label: STATUS_LABEL.installment },
     { value: "completed", label: STATUS_LABEL.completed },
     { value: "cancelled", label: STATUS_LABEL.cancelled },
   ];
@@ -109,8 +199,6 @@ export default function Orders() {
     <div className="page">
       <div className="page-heading">
         <div>
-          <span className="eyebrow">SALES</span>
-
           <h1>Đơn hàng</h1>
 
           <p>Theo dõi, xử lý và xuất báo cáo các đơn đã bán.</p>
@@ -120,6 +208,18 @@ export default function Orders() {
           + Tạo đơn bán
         </Link>
       </div>
+
+      {notice && (
+        <div className="form-success" role="status">
+          {notice}
+        </div>
+      )}
+
+      {error && (
+        <div className="form-error" role="alert">
+          {error}
+        </div>
+      )}
 
       {orders.length === 0 ? (
         <div className="empty-state large">
@@ -157,7 +257,7 @@ export default function Orders() {
             <div className="orders-filters">
               <input
                 type="search"
-                placeholder="Tìm mã đơn, khách, SĐT, sản phẩm..."
+                placeholder="Tìm mã đơn, mã khách, tên, SĐT, sản phẩm..."
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
               />
@@ -194,6 +294,13 @@ export default function Orders() {
               Doanh thu (đơn hoàn thành):{" "}
               <strong>{formatPrice(totalRevenue(filtered))}</strong>
             </span>
+
+            {outstanding > 0 && (
+              <span>
+                Còn phải thu (trả góp):{" "}
+                <strong>{formatPrice(outstanding)}</strong>
+              </span>
+            )}
           </div>
 
           {filtered.length === 0 ? (
@@ -212,6 +319,7 @@ export default function Orders() {
                     <th>Thanh toán</th>
                     <th>Tổng tiền</th>
                     <th>Trạng thái</th>
+                    <th>Thao tác</th>
                   </tr>
                 </thead>
 
@@ -221,6 +329,8 @@ export default function Orders() {
                       (sum, item) => sum + item.quantity,
                       0,
                     );
+
+                    const next = getNextStatus(order);
 
                     return (
                       <tr key={order.id}>
@@ -240,6 +350,8 @@ export default function Orders() {
 
                           {order.customerPhone && (
                             <span className="cell-sub">
+                              {order.customerCode &&
+                                `${order.customerCode} · `}
                               {order.customerPhone}
                             </span>
                           )}
@@ -262,10 +374,53 @@ export default function Orders() {
                           <strong className="cell-strong">
                             {formatPrice(order.total)}
                           </strong>
+
+                          {order.installment && (
+                            <span className="cell-sub">
+                              Đã thu {formatPrice(installmentPaid(order))}
+                            </span>
+                          )}
                         </td>
 
                         <td>
                           <StatusBadge status={order.status} />
+                        </td>
+
+                        <td>
+                          <div className="order-row-actions">
+                            <Link
+                              className="secondary-button small"
+                              to={`/orders/${order.id}`}
+                            >
+                              Xem
+                            </Link>
+
+                            {next && (
+                              <button
+                                type="button"
+                                className="secondary-button small"
+                                disabled={isUpdating}
+                                onClick={() => handleAdvance(order, next)}
+                              >
+                                {isUpdating
+                                  ? "Đang xử lý..."
+                                  : STATUS_ACTION_LABEL[next]}
+                              </button>
+                            )}
+
+                            {getAllowedTransitions(order).includes(
+                              "cancelled",
+                            ) && (
+                              <button
+                                type="button"
+                                className="danger-button small"
+                                disabled={isUpdating}
+                                onClick={() => setCancelTarget(order)}
+                              >
+                                Hủy
+                              </button>
+                            )}
+                          </div>
                         </td>
                       </tr>
                     );
@@ -275,6 +430,18 @@ export default function Orders() {
             </div>
           )}
         </section>
+      )}
+
+      {cancelTarget && (
+        <CancelOrderDialog
+          order={cancelTarget}
+          onConfirm={handleCancelConfirm}
+          onClose={() => {
+            if (!isUpdating) {
+              setCancelTarget(null);
+            }
+          }}
+        />
       )}
     </div>
   );

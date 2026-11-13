@@ -22,5 +22,7 @@
     "erasableSyntaxOnly": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["src"]
+  "include": ["src"],
+  // Code NestJS (khóa học) nằm chung thư mục src nhưng không thuộc ứng dụng Vite/React
+  "exclude": ["src/tasks", "src/user"]
 }

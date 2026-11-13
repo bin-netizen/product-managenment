@@ -1,24 +1,53 @@
-import { useState } from "react";
+
+import { useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router-dom";
 
+import CancelOrderDialog from "../components/CancelOrderDialog";
+import InstallmentPanel from "../components/InstallmentPanel";
 import ProductThumb from "../components/ProductThumb";
 import StatusBadge from "../components/StatusBadge";
 import { useOrders } from "../context/OrderContext";
 import { useProducts } from "../context/ProductContext";
+import type { OrderInfoInput, PaymentMethod } from "../types/order";
+import { canonicalPhone } from "../utils/customers";
 import { formatPrice } from "../utils/format";
 import {
   formatDateTime,
+  getAllowedTransitions,
+  getNextStatus,
+  getOrderHistory,
+  getStatusFlow,
+  installmentPaid,
+  installmentRemaining,
   PAYMENT_LABEL,
-  STATUS_TRANSITIONS,
+  STATUS_ACTION_LABEL,
+  STATUS_LABEL,
 } from "../utils/orders";
 
 export default function OrderDetail() {
   const { id } = useParams();
 
-  const { getOrderById, updateOrderStatus } = useOrders();
+  return <OrderDetailView key={id} id={id} />;
+}
+
+function OrderDetailView({ id }: { id?: string }) {
+  const { getOrderById, updateOrderStatus, updateOrderInfo } =
+    useOrders();
+
   const { getProductById } = useProducts();
 
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [showCancel, setShowCancel] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [isUpdating, setIsUpdating] = useState(false);
+
+  const [form, setForm] = useState<OrderInfoInput>({
+    customerName: "",
+    customerPhone: "",
+    note: "",
+    paymentMethod: "cash",
+  });
 
   const order = id ? getOrderById(id) : undefined;
 
@@ -42,31 +71,119 @@ export default function OrderDetail() {
     );
   }
 
-  const canComplete =
-    STATUS_TRANSITIONS[order.status].includes("completed");
-  const canCancel =
-    STATUS_TRANSITIONS[order.status].includes("cancelled");
+  const isCancelled = order.status === "cancelled";
+  const transitions = getAllowedTransitions(order);
 
-  const handleComplete = () => {
-    const result = updateOrderStatus(order.id, "completed");
+  const forwardSteps = transitions.filter(
+    (status) => status !== "cancelled",
+  );
 
-    setError(result.ok ? "" : result.error);
+  const canCancel = transitions.includes("cancelled");
+  const history = getOrderHistory(order);
+  const flow = getStatusFlow(order);
+  const flowIndex = flow.indexOf(order.status);
+  const nextStatus = getNextStatus(order);
+  const remaining = installmentRemaining(order);
+
+  const completeBlocked =
+    order.paymentMethod === "installment" &&
+    order.status === "installment" &&
+    remaining > 0;
+
+  // Cập nhật trạng thái và chờ backend xử lý.
+  const handleAdvance = async (
+    status: (typeof transitions)[number],
+  ) => {
+    if (isUpdating) return;
+
+    setIsUpdating(true);
+    setError("");
+    setNotice("");
+
+    try {
+      const result = await updateOrderStatus(order.id, status);
+
+      if (result.ok) {
+        setNotice(
+          `Đã chuyển đơn sang "${STATUS_LABEL[status]}".`,
+        );
+      } else {
+        setError(result.error);
+      }
+    } catch (error) {
+      console.error("Lỗi cập nhật trạng thái đơn hàng:", error);
+
+      setError(
+        error instanceof Error
+          ? error.message
+          : "Không thể cập nhật trạng thái đơn hàng.",
+      );
+    } finally {
+      setIsUpdating(false);
+    }
   };
 
-  const handleCancel = () => {
-    const confirmed = window.confirm(
-      order.status === "completed"
-        ? `Hủy đơn ${order.code}? Đơn đã hoàn thành sẽ bị trừ khỏi doanh thu và hàng được hoàn lại kho. Thao tác này không thể hoàn tác.`
-        : `Hủy đơn ${order.code}? Hàng sẽ được hoàn lại kho. Thao tác này không thể hoàn tác.`,
-    );
+  // Hủy đơn và chờ backend hoàn hàng về kho.
+  const handleCancelConfirm = async (reason: string) => {
+    if (isUpdating) return;
 
-    if (!confirmed) {
-      return;
+    setIsUpdating(true);
+    setError("");
+    setNotice("");
+
+    try {
+      const result = await updateOrderStatus(
+        order.id,
+        "cancelled",
+        { reason },
+      );
+
+      if (result.ok) {
+        setShowCancel(false);
+        setEditing(false);
+        setNotice("Đã hủy đơn và hoàn hàng về kho.");
+      } else {
+        setError(result.error);
+      }
+    } catch (error) {
+      console.error("Lỗi hủy đơn hàng:", error);
+
+      setError(
+        error instanceof Error
+          ? error.message
+          : "Không thể hủy đơn hàng. Vui lòng thử lại.",
+      );
+    } finally {
+      setIsUpdating(false);
     }
+  };
 
-    const result = updateOrderStatus(order.id, "cancelled");
+  const startEdit = () => {
+    setForm({
+      customerName: order.customerName,
+      customerPhone: order.customerPhone,
+      note: order.note,
+      paymentMethod: order.paymentMethod,
+    });
 
-    setError(result.ok ? "" : result.error);
+    setError("");
+    setNotice("");
+    setEditing(true);
+  };
+
+  const handleSaveInfo = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    const result = updateOrderInfo(order.id, form);
+
+    if (result.ok) {
+      setError("");
+      setNotice("Đã cập nhật thông tin đơn hàng.");
+      setEditing(false);
+    } else {
+      setNotice("");
+      setError(result.error);
+    }
   };
 
   return (
@@ -90,34 +207,236 @@ export default function OrderDetail() {
           >
             🖨 In hóa đơn
           </button>
-
-          {canComplete && (
-            <button
-              type="button"
-              className="primary-button"
-              onClick={handleComplete}
-            >
-              ✓ Hoàn thành đơn
-            </button>
-          )}
-
-          {canCancel && (
-            <button
-              type="button"
-              className="danger-button"
-              onClick={handleCancel}
-            >
-              Hủy đơn
-            </button>
-          )}
         </div>
       </header>
+
+      {notice && (
+        <div className="form-success no-print" role="status">
+          {notice}
+        </div>
+      )}
 
       {error && (
         <div className="form-error no-print" role="alert">
           {error}
         </div>
       )}
+
+      {/* XỬ LÝ ĐƠN */}
+
+      <section className="content-card order-process no-print">
+        {isCancelled ? (
+          <div className="order-cancel-banner">
+            <strong>
+              Đơn đã hủy
+              {order.cancelledAt &&
+                ` lúc ${formatDateTime(order.cancelledAt)}`}
+            </strong>
+
+            <p>
+              Lý do: {order.cancelReason || "Không ghi lý do"}. Hàng đã
+              được hoàn lại kho. Đơn đã hủy không thể mở lại hay chỉnh
+              sửa.
+            </p>
+          </div>
+        ) : (
+          <>
+            <ol className="order-steps" aria-label="Tiến trình đơn hàng">
+              {flow.map((status, index) => (
+                <li
+                  key={status}
+                  className={
+                    index < flowIndex
+                      ? "order-step done"
+                      : index === flowIndex
+                        ? "order-step current"
+                        : "order-step"
+                  }
+                  aria-current={
+                    index === flowIndex ? "step" : undefined
+                  }
+                >
+                  <span className="order-step-dot">
+                    {index < flowIndex || order.status === "completed"
+                      ? "✓"
+                      : index + 1}
+                  </span>
+
+                  {STATUS_LABEL[status]}
+                </li>
+              ))}
+            </ol>
+
+            <div className="order-process-actions">
+              {forwardSteps.map((status) => (
+                <button
+                  key={status}
+                  type="button"
+                  className={
+                    status === nextStatus
+                      ? "primary-button"
+                      : "secondary-button"
+                  }
+                  disabled={
+                    isUpdating ||
+                    (status === "completed" && completeBlocked)
+                  }
+                  onClick={() => handleAdvance(status)}
+                >
+                  {isUpdating
+                    ? "Đang xử lý..."
+                    : STATUS_ACTION_LABEL[status]}
+                </button>
+              ))}
+
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={startEdit}
+                disabled={editing || isUpdating}
+              >
+                ✏️ Sửa thông tin
+              </button>
+
+              {canCancel && (
+                <button
+                  type="button"
+                  className="danger-button"
+                  onClick={() => setShowCancel(true)}
+                  disabled={isUpdating}
+                >
+                  Hủy đơn
+                </button>
+              )}
+            </div>
+
+            {completeBlocked && (
+              <p className="order-process-hint">
+                Khách còn phải trả {formatPrice(remaining)}. Ghi nhận đủ
+                các khoản thu ở mục Trả góp bên dưới thì mới hoàn thành
+                được đơn.
+              </p>
+            )}
+          </>
+        )}
+      </section>
+
+      {/* SỬA THÔNG TIN */}
+
+      {editing && (
+        <form
+          className="content-card order-edit no-print"
+          onSubmit={handleSaveInfo}
+        >
+          <div className="detail-section-title">
+            <span className="detail-section-icon">✏️</span>
+
+            <div>
+              <h3>Sửa thông tin đơn hàng</h3>
+
+              <p>
+                Chỉ sửa được thông tin khách và thanh toán. Muốn đổi
+                sản phẩm, hãy hủy đơn rồi tạo đơn mới để kho luôn chính
+                xác.
+              </p>
+            </div>
+          </div>
+
+          <div className="form-grid">
+            <div className="form-group">
+              <label htmlFor="edit-name">Tên khách hàng</label>
+
+              <input
+                id="edit-name"
+                type="text"
+                maxLength={100}
+                value={form.customerName}
+                onChange={(event) =>
+                  setForm({ ...form, customerName: event.target.value })
+                }
+                placeholder="Để trống = Khách lẻ"
+              />
+            </div>
+
+            <div className="form-group">
+              <label htmlFor="edit-phone">Số điện thoại</label>
+
+              <input
+                id="edit-phone"
+                type="tel"
+                inputMode="tel"
+                value={form.customerPhone}
+                onChange={(event) =>
+                  setForm({ ...form, customerPhone: event.target.value })
+                }
+                placeholder="0901234567"
+              />
+            </div>
+
+            <div className="form-group">
+              <label htmlFor="edit-payment">Thanh toán</label>
+
+              <select
+                id="edit-payment"
+                disabled={order.paymentMethod === "installment"}
+                value={form.paymentMethod}
+                onChange={(event) =>
+                  setForm({
+                    ...form,
+                    paymentMethod: event.target.value as PaymentMethod,
+                  })
+                }
+              >
+                {Object.entries(PAYMENT_LABEL)
+                  .filter(([value]) =>
+                    order.paymentMethod === "installment"
+                      ? value === "installment"
+                      : value !== "installment",
+                  )
+                  .map(([value, label]) => (
+                    <option key={value} value={value}>
+                      {label}
+                    </option>
+                  ))}
+              </select>
+            </div>
+
+            <div className="form-group full">
+              <label htmlFor="edit-note">Ghi chú</label>
+
+              <textarea
+                id="edit-note"
+                rows={3}
+                maxLength={500}
+                value={form.note}
+                onChange={(event) =>
+                  setForm({ ...form, note: event.target.value })
+                }
+              />
+            </div>
+          </div>
+
+          <div className="form-actions">
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() => setEditing(false)}
+            >
+              Hủy chỉnh sửa
+            </button>
+
+            <button type="submit" className="primary-button">
+              Lưu thay đổi
+            </button>
+          </div>
+        </form>
+      )}
+
+      {/* TRẢ GÓP */}
+
+      <InstallmentPanel order={order} />
+
+      {/* HÓA ĐƠN */}
 
       <section className="content-card invoice">
         <div className="invoice-head">
@@ -135,7 +454,21 @@ export default function OrderDetail() {
         <div className="invoice-meta">
           <div>
             <span>Khách hàng</span>
-            <strong>{order.customerName || "Khách lẻ"}</strong>
+
+            {order.customerPhone ? (
+              <Link
+                to={`/customers/${order.customerCode || canonicalPhone(order.customerPhone)}`}
+                className="order-product-link"
+              >
+                <strong>{order.customerName || "Khách lẻ"}</strong>
+              </Link>
+            ) : (
+              <strong>{order.customerName || "Khách lẻ"}</strong>
+            )}
+
+            {order.customerCode && (
+              <span className="customer-code">{order.customerCode}</span>
+            )}
           </div>
 
           <div>
@@ -150,20 +483,28 @@ export default function OrderDetail() {
 
           <div>
             <span>
-              {order.status === "cancelled"
+              {isCancelled
                 ? "Đã hủy lúc"
                 : order.completedAt
                   ? "Hoàn thành lúc"
                   : "Hoàn thành"}
             </span>
+
             <strong>
-              {order.status === "cancelled" && order.cancelledAt
+              {isCancelled && order.cancelledAt
                 ? formatDateTime(order.cancelledAt)
                 : order.completedAt
                   ? formatDateTime(order.completedAt)
                   : "Chưa hoàn thành"}
             </strong>
           </div>
+
+          {isCancelled && (
+            <div className="invoice-meta-wide">
+              <span>Lý do hủy</span>
+              <strong>{order.cancelReason || "Không ghi lý do"}</strong>
+            </div>
+          )}
         </div>
 
         <div className="table-wrapper">
@@ -197,7 +538,16 @@ export default function OrderDetail() {
                         />
 
                         <div>
-                          <strong>{item.productName}</strong>
+                          {product ? (
+                            <Link
+                              to={`/products/${product.id}`}
+                              className="order-product-link"
+                            >
+                              <strong>{item.productName}</strong>
+                            </Link>
+                          ) : (
+                            <strong>{item.productName}</strong>
+                          )}
 
                           <span>
                             {item.colorName ?? "Mặc định"}
@@ -247,9 +597,76 @@ export default function OrderDetail() {
               <span>Tổng thanh toán</span>
               <strong>{formatPrice(order.total)}</strong>
             </div>
+
+            {order.installment && (
+              <>
+                <div>
+                  <span>
+                    Đã thu ({order.installment.months} tháng)
+                  </span>
+                  <strong>{formatPrice(installmentPaid(order))}</strong>
+                </div>
+
+                <div>
+                  <span>Còn phải thu</span>
+                  <strong>{formatPrice(remaining)}</strong>
+                </div>
+              </>
+            )}
           </div>
         </div>
       </section>
+
+      {/* LỊCH SỬ */}
+
+      <section className="content-card order-history no-print">
+        <div className="detail-section-title">
+          <span className="detail-section-icon">🕒</span>
+
+          <div>
+            <h3>Lịch sử đơn hàng</h3>
+
+            <p>Các mốc xử lý theo thứ tự thời gian</p>
+          </div>
+        </div>
+
+        <ol className="order-timeline">
+          {history.map((entry, index) => (
+            <li key={`${entry.at}-${index}`}>
+              <span
+                className={`timeline-dot ${entry.status}`}
+                aria-hidden="true"
+              />
+
+              <div>
+                <strong>
+                  {index === 0
+                    ? `Tạo đơn (${STATUS_LABEL[entry.status]})`
+                    : `Chuyển sang "${STATUS_LABEL[entry.status]}"`}
+                </strong>
+
+                <time dateTime={entry.at}>
+                  {formatDateTime(entry.at)}
+                </time>
+
+                {entry.note && <p>Lý do: {entry.note}</p>}
+              </div>
+            </li>
+          ))}
+        </ol>
+      </section>
+
+      {showCancel && (
+        <CancelOrderDialog
+          order={order}
+          onConfirm={handleCancelConfirm}
+          onClose={() => {
+            if (!isUpdating) {
+              setShowCancel(false);
+            }
+          }}
+        />
+      )}
     </div>
   );
 }

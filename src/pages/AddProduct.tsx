@@ -1,3 +1,4 @@
+
 import { useNavigate } from "react-router-dom";
 
 import ProductForm from "../components/ProductForm";
@@ -13,9 +14,20 @@ export default function AddProduct() {
       subtitle="Chọn loại sản phẩm, biểu mẫu sẽ hiển thị đúng các trường cần nhập."
       backTo="/products"
       submitLabel="+ Thêm sản phẩm"
-      onSubmit={(values) => {
-        addProduct(values);
-        navigate("/products");
+      onSubmit={async (values) => {
+        try {
+          await addProduct(values);
+
+          navigate("/products");
+        } catch (error) {
+          console.error("Lỗi thêm sản phẩm:", error);
+
+          alert(
+            error instanceof Error
+              ? error.message
+              : "Không thể thêm sản phẩm. Vui lòng thử lại.",
+          );
+        }
       }}
     />
   );

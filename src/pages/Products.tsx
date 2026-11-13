@@ -64,14 +64,13 @@ function Products() {
     <div className="page">
       <div className="page-heading">
         <div>
-          <span className="eyebrow">PRODUCT CATALOG</span>
 
           <h1>Products</h1>
 
           <p>Danh sách sản phẩm, tồn kho và số lượng đã bán.</p>
         </div>
 
-        <Link to="/products/add" className="primary-button">
+        <Link to="/add" className="primary-button">
           + Thêm sản phẩm
         </Link>
       </div>
@@ -84,7 +83,7 @@ function Products() {
 
           <p>Bạn chưa thêm sản phẩm vào hệ thống.</p>
 
-          <Link to="/products/add" className="primary-button">
+          <Link to="/add" className="primary-button">
             + Thêm sản phẩm đầu tiên
           </Link>
         </div>
